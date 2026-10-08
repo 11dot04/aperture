@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import com.microtag.R
@@ -39,13 +40,11 @@ object MicrotagReminder {
         notificationId: Int,
         timeoutSeconds: Int = 0,
         iconName: String? = null,
-        customIcon: Int = 0,
+        customIcon: Icon? = null,
         detailPayload: InspectPayload? = null
     ) {
         createNotificationChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        val iconRes = if (customIcon != 0) customIcon else resolveDrawable(context, iconName)
 
         val dismissIntent = Intent(context, CapsuleDismissReceiver::class.java).apply {
             putExtra("notification_id", notificationId)
@@ -57,7 +56,6 @@ object MicrotagReminder {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // PendingIntent to launch inspection sheet if payload exists
         val contentPendingIntent = detailPayload?.let { payload ->
             val tapIntent = Intent(context, ProcessTextActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
@@ -72,7 +70,6 @@ object MicrotagReminder {
             )
         }
 
-        // Android 16 Live Updates bundle keys
         val liveExtras = Bundle().apply {
             putString("android.substName", pillText)
             putCharSequence("android.ongoingActivity.shortText", pillText)
@@ -80,7 +77,6 @@ object MicrotagReminder {
         }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(iconRes)
             .setContentTitle(title)
             .setContentText(content)
             .setSubText(pillText)
@@ -92,6 +88,12 @@ object MicrotagReminder {
             .addExtras(liveExtras)
             .addAction(0, "Dismiss", dismissPendingIntent)
 
+        if (customIcon != null) {
+            builder.setSmallIcon(androidx.core.graphics.drawable.IconCompat.createFromIcon(customIcon)!!)
+        } else {
+            builder.setSmallIcon(resolveDrawable(context, iconName))
+        }
+
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)
         }
@@ -102,7 +104,6 @@ object MicrotagReminder {
 
         val notification = builder.build()
 
-        // Hook reflection for Android 16 OngoingActivityStyle if present
         try {
             val styleClass = Class.forName("android.app.Notification\$OngoingActivityStyle")
             val constructor = styleClass.getConstructor()
@@ -113,9 +114,7 @@ object MicrotagReminder {
 
             val applyMethod = styleClass.getMethod("apply", Notification::class.java)
             applyMethod.invoke(styleInstance, notification)
-        } catch (_: Exception) {
-            // Falls back cleanly to status bar notification
-        }
+        } catch (_: Exception) {}
 
         manager.notify(notificationId, notification)
     }
