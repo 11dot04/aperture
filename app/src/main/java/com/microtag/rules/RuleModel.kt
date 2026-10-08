@@ -1,4 +1,4 @@
-package com.aperture.rules
+package com.microtag.rules
 
 import org.json.JSONObject
 
