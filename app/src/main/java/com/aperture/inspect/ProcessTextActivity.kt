@@ -182,7 +182,79 @@ class ProcessTextActivity : Activity() {
             }
         }
 
-        // 5. Currency Lookup
+        // 5. Deterministic Unit Conversions
+        val unitPattern = Regex("""(?i)^\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilograms?|mi|miles?|km|kilometers?|f|fahrenheit|c|celsius|psi|bar)\s*$""")
+        val unitMatch = unitPattern.find(rawText)
+        if (unitMatch != null) {
+            val value = unitMatch.groupValues[1].toDoubleOrNull()
+            val unit = unitMatch.groupValues[2].lowercase(Locale.ROOT)
+            if (value != null) {
+                var convertedVal = 0.0
+                var targetUnit = ""
+
+                when {
+                    unit.startsWith("lb") || unit.startsWith("pound") -> {
+                        convertedVal = value * 0.45359237
+                        targetUnit = "kg"
+                    }
+                    unit == "kg" || unit.startsWith("kilogram") -> {
+                        convertedVal = value / 0.45359237
+                        targetUnit = "lbs"
+                    }
+                    unit == "mi" || unit.startsWith("mile") -> {
+                        convertedVal = value * 1.609344
+                        targetUnit = "km"
+                    }
+                    unit == "km" || unit.startsWith("kilometer") -> {
+                        convertedVal = value / 1.609344
+                        targetUnit = "mi"
+                    }
+                    unit == "f" || unit.startsWith("fahrenheit") -> {
+                        convertedVal = (value - 32.0) * (5.0 / 9.0)
+                        targetUnit = "°C"
+                    }
+                    unit == "c" || unit.startsWith("celsius") -> {
+                        convertedVal = (value * (9.0 / 5.0)) + 32.0
+                        targetUnit = "°F"
+                    }
+                    unit == "psi" -> {
+                        convertedVal = value * 0.0689476
+                        targetUnit = "bar"
+                    }
+                    unit == "bar" -> {
+                        convertedVal = value / 0.0689476
+                        targetUnit = "psi"
+                    }
+                }
+
+                val formatted = if (convertedVal % 1.0 == 0.0) {
+                    convertedVal.toLong().toString()
+                } else {
+                    String.format(Locale.ROOT, "%.2f", convertedVal)
+                }
+
+                val resultPill = "$formatted $targetUnit"
+                ApertureReminder.showCapsule(
+                    context = applicationContext,
+                    pillText = resultPill,
+                    title = "Unit Conversion",
+                    content = "$rawText = $resultPill",
+                    notificationId = INSPECT_NOTIFICATION_ID,
+                    timeoutSeconds = 15,
+                    detailPayload = ApertureReminder.InspectPayload(
+                        domain = "CONV",
+                        title = resultPill,
+                        subtitle = rawText,
+                        fullContent = "$rawText is equal to $resultPill",
+                        copyText = resultPill
+                    )
+                )
+                finish()
+                return
+            }
+        }
+
+        // 6. Currency Lookup
         val currMatch = Regex("(?i)^([$€£¥₹])?\\s*(\\d+(?:\\.\\d+)?)\\s*([a-z]{3})?$").find(rawText)
         if (currMatch != null) {
             val sym = currMatch.groupValues[1]
@@ -204,7 +276,7 @@ class ProcessTextActivity : Activity() {
             }
         }
 
-        // 6. Network/Dictionary or URL Redirect Follow
+        // 7. Network / Dictionary or URL Redirect Follow (Generic Fallback)
         thread {
             if (rawText.startsWith("http://") || rawText.startsWith("https://") || (rawText.contains(".") && !rawText.contains(" "))) {
                 resolveUrl(rawText)
