@@ -1,0 +1,18 @@
+[
+  {
+    "id": "otp_sms",
+    "packageName": "com.google.android.apps.messaging",
+    "contentPattern": "(?i)(?:otp|code|verification)\\s+(?:is\\s+)?(\\d{4,8})",
+    "pillTemplate": "OTP: $1",
+    "iconName": "ic_security",
+    "timeoutSeconds": 30
+  },
+  {
+    "id": "duolingo_streak",
+    "packageName": "com.duolingo",
+    "titlePattern": "(\\d+)\\s+day streak",
+    "pillTemplate": "$1d Streak",
+    "iconName": "ic_fire",
+    "timeoutSeconds": 15
+  }
+]
