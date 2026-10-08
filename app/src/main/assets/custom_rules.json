@@ -29,7 +29,7 @@
   },
   {
     "package_name": "com.duolingo",
-    "regex": "(?i)(\\d+)[-\\s]*(?:day)?[-\\s]*streak",
+    "regex": "(?i)(\\d+)[-\\s]*(?:day|days)?\\s*streak(?!\\s*freeze)",
     "pill_text": "$1d",
     "icon_name": "ic_capsule_flame",
     "timeout_seconds": 0
