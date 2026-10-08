@@ -137,7 +137,9 @@ object ShizukuClipboardWatcher {
             val intent = Intent(ctx, ProcessTextActivity::class.java).apply {
                 action = Intent.ACTION_PROCESS_TEXT
                 type = "text/plain"
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION or 
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 putExtra(Intent.EXTRA_PROCESS_TEXT, trimmed)
             }
             ctx.startActivity(intent)
