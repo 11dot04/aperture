@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light Mode: sysca1_30 on sysca2_90 -->
+    <color name="icon_surface">@android:color/system_neutral2_90</color>
+    <color name="icon_on_surface">@android:color/system_accent1_30</color>
+</resources>
