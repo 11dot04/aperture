@@ -28,6 +28,8 @@ object RuleEngine {
         }
     }
 
+    fun getActiveRules(): List<ApertureRule> = rules
+
     fun evaluate(packageName: String, title: String, content: String): MatchResult? {
         val candidateRules = rules.filter { it.packageName.equals(packageName, ignoreCase = true) }
         val targetText = "$title $content".trim()
