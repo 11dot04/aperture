@@ -1,4 +1,4 @@
-package com.aperture.shizuku
+package com.microtag.shizuku
 
 import android.content.ClipData
 import android.content.Context
