@@ -11,15 +11,16 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
-import com.aperture.core.ApertureReminder
+import com.microtag.core.MicrotagReminder
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
-import java.util.*
-import java.util.concurrent.TimeUnit
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import kotlin.concurrent.thread
 
 class ProcessTextActivity : Activity() {
@@ -45,14 +46,14 @@ class ProcessTextActivity : Activity() {
             val s = totalSeconds % 60
             val pill = if (m == 0) "${s}s read" else "~${m}m read"
 
-            ApertureReminder.showCapsule(
+            MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = pill,
                 title = "Reading Estimate",
                 content = "${wordList.size} words • ${rawText.length} characters",
                 notificationId = INSPECT_NOTIFICATION_ID,
                 timeoutSeconds = 12,
-                detailPayload = ApertureReminder.InspectPayload(
+                detailPayload = MicrotagReminder.InspectPayload(
                     domain = "LXCN",
                     title = "Reading Estimate",
                     subtitle = "${wordList.size} words",
@@ -78,7 +79,7 @@ class ProcessTextActivity : Activity() {
                 val bmp = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888)
                 Canvas(bmp).drawCircle(24f, 24f, 24f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = parsedColor })
 
-                ApertureReminder.showCapsule(
+                MicrotagReminder.showCapsule(
                     context = applicationContext,
                     pillText = "#$fullHex",
                     title = "Color Swatch",
@@ -86,7 +87,7 @@ class ProcessTextActivity : Activity() {
                     notificationId = INSPECT_NOTIFICATION_ID,
                     customIcon = Icon.createWithBitmap(bmp),
                     timeoutSeconds = 15,
-                    detailPayload = ApertureReminder.InspectPayload(
+                    detailPayload = MicrotagReminder.InspectPayload(
                         domain = "SWTCH",
                         title = "#${fullHex.uppercase()}",
                         subtitle = "RGB ($r, $g, $b)",
@@ -104,8 +105,8 @@ class ProcessTextActivity : Activity() {
         if (tzMatch != null) {
             var hour = tzMatch.groupValues[1].toInt()
             val min = tzMatch.groupValues[2].toIntOrNull() ?: 0
-            val ampm = tzMatch.groupValues[3].lowercase()
-            val tzStr = tzMatch.groupValues[4].uppercase()
+            val ampm = tzMatch.groupValues[3].lowercase(Locale.ROOT)
+            val tzStr = tzMatch.groupValues[4].uppercase(Locale.ROOT)
 
             if (ampm == "pm" && hour < 12) hour += 12
             if (ampm == "am" && hour == 12) hour = 0
@@ -125,14 +126,14 @@ class ProcessTextActivity : Activity() {
                 timeZone = TimeZone.getDefault()
             }.format(cal.time)
 
-            ApertureReminder.showCapsule(
+            MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = SimpleDateFormat("h:mm a", Locale.getDefault()).format(cal.time),
                 title = "Time Conversion",
                 content = "$rawText = $localTime",
                 notificationId = INSPECT_NOTIFICATION_ID,
                 timeoutSeconds = 12,
-                detailPayload = ApertureReminder.InspectPayload(
+                detailPayload = MicrotagReminder.InspectPayload(
                     domain = "TIME",
                     title = localTime,
                     subtitle = "From $rawText ($tzStr)",
@@ -161,14 +162,14 @@ class ProcessTextActivity : Activity() {
                 }
                 if (res != null) {
                     val formatted = if (res % 1.0 == 0.0) res.toLong().toString() else String.format(Locale.ROOT, "%.3f", res).trimEnd('0').trimEnd('.')
-                    ApertureReminder.showCapsule(
+                    MicrotagReminder.showCapsule(
                         context = applicationContext,
                         pillText = formatted,
                         title = "Calculation",
                         content = "$rawText = $formatted",
                         notificationId = INSPECT_NOTIFICATION_ID,
                         timeoutSeconds = 15,
-                        detailPayload = ApertureReminder.InspectPayload(
+                        detailPayload = MicrotagReminder.InspectPayload(
                             domain = "CALC",
                             title = formatted,
                             subtitle = rawText,
@@ -234,14 +235,14 @@ class ProcessTextActivity : Activity() {
                 }
 
                 val resultPill = "$formatted $targetUnit"
-                ApertureReminder.showCapsule(
+                MicrotagReminder.showCapsule(
                     context = applicationContext,
                     pillText = resultPill,
                     title = "Unit Conversion",
                     content = "$rawText = $resultPill",
                     notificationId = INSPECT_NOTIFICATION_ID,
                     timeoutSeconds = 15,
-                    detailPayload = ApertureReminder.InspectPayload(
+                    detailPayload = MicrotagReminder.InspectPayload(
                         domain = "CONV",
                         title = resultPill,
                         subtitle = rawText,
@@ -259,7 +260,7 @@ class ProcessTextActivity : Activity() {
         if (currMatch != null) {
             val sym = currMatch.groupValues[1]
             val amt = currMatch.groupValues[2].toDoubleOrNull()
-            val code = currMatch.groupValues[3].uppercase()
+            val code = currMatch.groupValues[3].uppercase(Locale.ROOT)
             if (amt != null && (sym.isNotBlank() || code.isNotBlank())) {
                 val base = when {
                     sym == "$" || code == "USD" -> "USD"
@@ -290,12 +291,12 @@ class ProcessTextActivity : Activity() {
         val word = rawText.replace(Regex("[^a-zA-Z0-9\\s-]"), "").trim().split("\\s+".toRegex()).firstOrNull() ?: ""
         if (word.isBlank()) { finish(); return }
 
-        var resolvedTitle = word.replaceFirstChar { it.uppercase() }
+        val resolvedTitle = word.replaceFirstChar { it.uppercase() }
         var resolvedSubtitle = ""
         var resolvedBody = ""
 
         try {
-            val encoded = URLEncoder.encode(word.lowercase(), "UTF-8")
+            val encoded = URLEncoder.encode(word.lowercase(Locale.ROOT), "UTF-8")
             val conn = (URL("https://api.dictionaryapi.dev/api/v2/entries/en/$encoded").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 2500
                 readTimeout = 2500
@@ -329,7 +330,7 @@ class ProcessTextActivity : Activity() {
         // Datamuse Fallback
         if (resolvedBody.isBlank()) {
             try {
-                val encoded = URLEncoder.encode(word.lowercase(), "UTF-8")
+                val encoded = URLEncoder.encode(word.lowercase(Locale.ROOT), "UTF-8")
                 val conn = (URL("https://api.datamuse.com/words?sp=$encoded&md=d&max=1").openConnection() as HttpURLConnection).apply {
                     connectTimeout = 2500
                     readTimeout = 2500
@@ -355,14 +356,14 @@ class ProcessTextActivity : Activity() {
 
         mainHandler.post {
             if (resolvedBody.isNotBlank()) {
-                ApertureReminder.showCapsule(
+                MicrotagReminder.showCapsule(
                     context = applicationContext,
                     pillText = word,
                     title = resolvedTitle,
                     content = resolvedSubtitle.ifBlank { "Definition" },
                     notificationId = INSPECT_NOTIFICATION_ID,
                     timeoutSeconds = 25,
-                    detailPayload = ApertureReminder.InspectPayload(
+                    detailPayload = MicrotagReminder.InspectPayload(
                         domain = "LXCN",
                         title = resolvedTitle,
                         subtitle = resolvedSubtitle,
@@ -404,14 +405,14 @@ class ProcessTextActivity : Activity() {
             conn.disconnect()
 
             mainHandler.post {
-                ApertureReminder.showCapsule(
+                MicrotagReminder.showCapsule(
                     context = applicationContext,
                     pillText = host,
                     title = host,
                     content = destination,
                     notificationId = INSPECT_NOTIFICATION_ID,
                     timeoutSeconds = 15,
-                    detailPayload = ApertureReminder.InspectPayload(
+                    detailPayload = MicrotagReminder.InspectPayload(
                         domain = "URL",
                         title = host,
                         subtitle = "Redirect Resolved",
@@ -441,14 +442,14 @@ class ProcessTextActivity : Activity() {
                 val formatted = String.format(Locale.ROOT, "%.2f %s", converted, targetCode)
 
                 mainHandler.post {
-                    ApertureReminder.showCapsule(
+                    MicrotagReminder.showCapsule(
                         context = applicationContext,
                         pillText = formatted,
                         title = "$amt $base Conversion",
                         content = "$amt $base = $formatted",
                         notificationId = INSPECT_NOTIFICATION_ID,
                         timeoutSeconds = 15,
-                        detailPayload = ApertureReminder.InspectPayload(
+                        detailPayload = MicrotagReminder.InspectPayload(
                             domain = "CALC",
                             title = formatted,
                             subtitle = "$amt $base",
