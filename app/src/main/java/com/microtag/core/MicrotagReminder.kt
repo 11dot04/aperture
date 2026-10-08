@@ -6,10 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import com.microtag.R
+import com.microtag.inspect.InspectPayload
+import com.microtag.inspect.ProcessTextActivity
 
 object MicrotagReminder {
     private const val CHANNEL_ID = "microtag_live_capsules"
@@ -37,12 +38,14 @@ object MicrotagReminder {
         content: String,
         notificationId: Int,
         timeoutSeconds: Int = 0,
-        iconName: String? = null
+        iconName: String? = null,
+        customIcon: Int = 0,
+        detailPayload: InspectPayload? = null
     ) {
         createNotificationChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        val iconRes = resolveDrawable(context, iconName)
+        val iconRes = if (customIcon != 0) customIcon else resolveDrawable(context, iconName)
 
         val dismissIntent = Intent(context, CapsuleDismissReceiver::class.java).apply {
             putExtra("notification_id", notificationId)
@@ -54,7 +57,22 @@ object MicrotagReminder {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Android 16 Live Updates / Status Chip bundle keys
+        // PendingIntent to launch inspection sheet if payload exists
+        val contentPendingIntent = detailPayload?.let { payload ->
+            val tapIntent = Intent(context, ProcessTextActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("EXTRA_PAYLOAD", payload)
+            }
+            PendingIntent.getActivity(
+                context,
+                notificationId + 1000,
+                tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        // Android 16 Live Updates bundle keys
         val liveExtras = Bundle().apply {
             putString("android.substName", pillText)
             putCharSequence("android.ongoingActivity.shortText", pillText)
@@ -65,7 +83,7 @@ object MicrotagReminder {
             .setSmallIcon(iconRes)
             .setContentTitle(title)
             .setContentText(content)
-            .setSubText(pillText) // Status bar chip fallback text
+            .setSubText(pillText)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
@@ -74,13 +92,17 @@ object MicrotagReminder {
             .addExtras(liveExtras)
             .addAction(0, "Dismiss", dismissPendingIntent)
 
+        if (contentPendingIntent != null) {
+            builder.setContentIntent(contentPendingIntent)
+        }
+
         if (timeoutSeconds > 0) {
             builder.setTimeoutAfter(timeoutSeconds * 1000L)
         }
 
         val notification = builder.build()
 
-        // Hook reflection for Android 16 OngoingActivityStyle if present on device runtime
+        // Hook reflection for Android 16 OngoingActivityStyle if present
         try {
             val styleClass = Class.forName("android.app.Notification\$OngoingActivityStyle")
             val constructor = styleClass.getConstructor()
@@ -92,7 +114,7 @@ object MicrotagReminder {
             val applyMethod = styleClass.getMethod("apply", Notification::class.java)
             applyMethod.invoke(styleInstance, notification)
         } catch (_: Exception) {
-            // Falls back cleanly to standard high-priority ongoing status notification
+            // Falls back cleanly to status bar notification
         }
 
         manager.notify(notificationId, notification)
