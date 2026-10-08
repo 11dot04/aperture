@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark Mode: sysca1_80 on sysca2_20 -->
-    <color name="icon_surface">@android:color/system_neutral2_20</color>
-    <color name="icon_on_surface">@android:color/system_accent1_80</color>
+    <!-- Background container: sysca2 tone ~20 equivalent -->
+    <color name="icon_surface">@android:color/system_neutral2_800</color>
+
+    <!-- Foreground glyph: sysca1 tone ~80 equivalent -->
+    <color name="icon_on_surface">@android:color/system_accent1_200</color>
 </resources>
