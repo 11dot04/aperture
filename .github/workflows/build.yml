@@ -21,6 +21,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Generate Persistent Signing Key
+        run: |
+          keytool -genkey -v \
+            -keystore app/release.keystore \
+            -alias microtag \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass microtagpass \
+            -keypass microtagpass \
+            -dname "CN=Microtag, OU=Production, O=Microtag, L=Global, S=Global, C=US"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
