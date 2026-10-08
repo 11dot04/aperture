@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Parcel
@@ -20,25 +21,23 @@ object ShizukuClipboardWatcher {
     private var appContext: Context? = null
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        Log.d(TAG, "Shizuku/Shizuku Next binder acquired.")
+        Log.d(TAG, "Shizuku binder acquired.")
         checkAndAttach()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        Log.w(TAG, "Shizuku service died or was terminated. Resetting listener state.")
+        Log.w(TAG, "Shizuku service died or was terminated.")
         isListening = false
     }
 
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "Privileged permission granted. Hooking IClipboard.")
             attachClipboardHook()
         }
     }
 
     fun init(context: Context) {
         appContext = context.applicationContext
-
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
     }
@@ -60,9 +59,20 @@ object ShizukuClipboardWatcher {
             val rawBinder = SystemServiceHelper.getSystemService("clipboard") ?: return
             val wrappedBinder = ShizukuBinderWrapper(rawBinder)
 
-            val listener = object : android.content.IOnPrimaryClipChangedListener.Stub() {
-                override fun dispatchPrimaryClipChanged() {
-                    fetchPrimaryClip(wrappedBinder)
+            // Implement IOnPrimaryClipChangedListener via generic Binder to avoid hidden SDK stubs
+            val listener = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    // TRANSACTION_dispatchPrimaryClipChanged = FIRST_CALL_TRANSACTION
+                    if (code == IBinder.FIRST_CALL_TRANSACTION) {
+                        data.enforceInterface("android.content.IOnPrimaryClipChangedListener")
+                        fetchPrimaryClip(wrappedBinder)
+                        return true
+                    }
+                    return super.onTransact(code, data, reply, flags)
+                }
+
+                override fun getInterfaceDescriptor(): String {
+                    return "android.content.IOnPrimaryClipChangedListener"
                 }
             }
 
@@ -70,7 +80,7 @@ object ShizukuClipboardWatcher {
             val reply = Parcel.obtain()
             try {
                 data.writeInterfaceToken("android.content.IClipboard")
-                data.writeStrongBinder(listener.asBinder())
+                data.writeStrongBinder(listener)
                 data.writeString("com.android.shell")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     data.writeString(null)
@@ -81,13 +91,13 @@ object ShizukuClipboardWatcher {
                 wrappedBinder.transact(IBinder.FIRST_CALL_TRANSACTION + 5, data, reply, 0)
                 reply.readException()
                 isListening = true
-                Log.d(TAG, "IClipboard change listener active via privileged IPC.")
+                Log.d(TAG, "Privileged clipboard listener registered.")
             } finally {
                 data.recycle()
                 reply.recycle()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed hooking privileged IClipboard: ${e.message}")
+            Log.e(TAG, "Failed hooking IClipboard: ${e.message}")
         }
     }
 
@@ -114,7 +124,7 @@ object ShizukuClipboardWatcher {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed fetching primary clip payload: ${e.message}")
+            Log.e(TAG, "Failed fetching clip: ${e.message}")
         } finally {
             data.recycle()
             reply.recycle()
@@ -137,8 +147,8 @@ object ShizukuClipboardWatcher {
             val intent = Intent(ctx, ProcessTextActivity::class.java).apply {
                 action = Intent.ACTION_PROCESS_TEXT
                 type = "text/plain"
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION or 
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION or
                         Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
                 putExtra(Intent.EXTRA_PROCESS_TEXT, trimmed)
             }
