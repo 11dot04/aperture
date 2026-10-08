@@ -1,4 +1,4 @@
-package com.aperture.inspect
+package com.microtag.inspect
 
 import android.app.Activity
 import android.content.Intent
