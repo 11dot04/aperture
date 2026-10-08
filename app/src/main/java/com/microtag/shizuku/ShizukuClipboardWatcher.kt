@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
-import android.os.IInterface
 import android.os.Parcel
 import android.util.Log
 import com.microtag.inspect.ProcessTextActivity
@@ -18,19 +17,34 @@ object ShizukuClipboardWatcher {
     private const val TAG = "MicrotagClipboard"
     private var isListening = false
     private var lastObservedClip = ""
+    private var appContext: Context? = null
+
+    private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
+        Log.d(TAG, "Shizuku/Shizuku Next binder acquired.")
+        checkAndAttach()
+    }
+
+    private val binderDeadListener = Shizuku.OnBinderDeadListener {
+        Log.w(TAG, "Shizuku service died or was terminated. Resetting listener state.")
+        isListening = false
+    }
 
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "Shizuku granted. Registering clipboard observer.")
+            Log.d(TAG, "Privileged permission granted. Hooking IClipboard.")
             attachClipboardHook()
         }
     }
 
     fun init(context: Context) {
-        if (!Shizuku.pingBinder()) {
-            Log.w(TAG, "Shizuku service unreachable or not installed.")
-            return
-        }
+        appContext = context.applicationContext
+
+        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
+        Shizuku.addBinderDeadListener(binderDeadListener)
+    }
+
+    private fun checkAndAttach() {
+        if (!Shizuku.pingBinder()) return
 
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
             attachClipboardHook()
@@ -46,8 +60,6 @@ object ShizukuClipboardWatcher {
             val rawBinder = SystemServiceHelper.getSystemService("clipboard") ?: return
             val wrappedBinder = ShizukuBinderWrapper(rawBinder)
 
-            // Register primary clip changed listener via direct IPC
-            // Interface token: android.content.IClipboard
             val listener = object : android.content.IOnPrimaryClipChangedListener.Stub() {
                 override fun dispatchPrimaryClipChanged() {
                     fetchPrimaryClip(wrappedBinder)
@@ -59,25 +71,23 @@ object ShizukuClipboardWatcher {
             try {
                 data.writeInterfaceToken("android.content.IClipboard")
                 data.writeStrongBinder(listener.asBinder())
-                // In AOSP, "com.android.shell" provides privileged caller context through Shizuku
                 data.writeString("com.android.shell")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    data.writeString(null) // attributionTag
+                    data.writeString(null)
                 }
-                data.writeInt(0) // userId: USER_SYSTEM
+                data.writeInt(0) // USER_SYSTEM
 
-                // IBinder.FIRST_CALL_TRANSACTION + 5 corresponds to addPrimaryClipChangedListener in standard AOSP IClipboard
-                // Shizuku transacts with elevated UID 2000 (shell)
+                // IBinder.FIRST_CALL_TRANSACTION + 5: addPrimaryClipChangedListener
                 wrappedBinder.transact(IBinder.FIRST_CALL_TRANSACTION + 5, data, reply, 0)
                 reply.readException()
                 isListening = true
-                Log.d(TAG, "Registered clipboard change listener via privileged IPC.")
+                Log.d(TAG, "IClipboard change listener active via privileged IPC.")
             } finally {
                 data.recycle()
                 reply.recycle()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed hooking IClipboard: ${e.message}")
+            Log.e(TAG, "Failed hooking privileged IClipboard: ${e.message}")
         }
     }
 
@@ -88,23 +98,23 @@ object ShizukuClipboardWatcher {
             data.writeInterfaceToken("android.content.IClipboard")
             data.writeString("com.android.shell")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                data.writeString(null) // attributionTag
+                data.writeString(null)
             }
-            data.writeInt(0) // userId: USER_SYSTEM
+            data.writeInt(0)
 
-            // IBinder.FIRST_CALL_TRANSACTION + 1 corresponds to getPrimaryClip in standard AOSP IClipboard
+            // IBinder.FIRST_CALL_TRANSACTION + 1: getPrimaryClip
             binder.transact(IBinder.FIRST_CALL_TRANSACTION + 1, data, reply, 0)
             reply.readException()
 
             if (reply.readInt() != 0) {
                 val clipData = ClipData.CREATOR.createFromParcel(reply)
-                val text = clipData.getItemAt(0)?.coerceToText(null)?.toString()
+                val text = clipData.getItemAt(0)?.coerceToText(appContext)?.toString()
                 if (!text.isNullOrBlank()) {
                     evaluateClip(text)
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed fetching primary clip: ${e.message}")
+            Log.e(TAG, "Failed fetching primary clip payload: ${e.message}")
         } finally {
             data.recycle()
             reply.recycle()
@@ -116,7 +126,6 @@ object ShizukuClipboardWatcher {
         if (trimmed == lastObservedClip || trimmed.length < 2) return
         lastObservedClip = trimmed
 
-        // High-intent triggers (instant regex triage)
         val isOtp = Regex("""\b\d{4,8}\b""").matches(trimmed)
         val isHex = Regex("""(?i)^#?([0-9a-f]{6}|[0-9a-f]{3})$""").matches(trimmed)
         val isMath = Regex("""^\s*(-?\d+)\s*([\+\-\*\/])\s*(-?\d+)\s*$""").matches(trimmed)
@@ -124,8 +133,14 @@ object ShizukuClipboardWatcher {
         val isUnit = Regex("""(?i)^\s*(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilograms?|mi|miles?|km|kilometers?|f|fahrenheit|c|celsius|psi|bar)\s*$""").matches(trimmed)
 
         if (isOtp || isHex || isMath || isUrl || isUnit) {
-            val appCtx = Shizuku.getBinder()?.let { null } // Context placeholder
-            // Triggers ProcessTextActivity headlessly when high-intent content is captured
+            val ctx = appContext ?: return
+            val intent = Intent(ctx, ProcessTextActivity::class.java).apply {
+                action = Intent.ACTION_PROCESS_TEXT
+                type = "text/plain"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                putExtra(Intent.EXTRA_PROCESS_TEXT, trimmed)
+            }
+            ctx.startActivity(intent)
         }
     }
 }
