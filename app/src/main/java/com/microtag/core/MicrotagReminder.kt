@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.drawable.IconCompat
 import com.microtag.R
 import com.microtag.inspect.InspectPayload
 import com.microtag.inspect.ProcessTextActivity
@@ -16,6 +17,9 @@ import com.microtag.inspect.ProcessTextActivity
 object MicrotagReminder {
     private const val CHANNEL_ID = "microtag_live_capsules"
     private const val CHANNEL_NAME = "Live Status Capsules"
+
+    // Modular alias exposing the standalone model under the MicrotagReminder namespace
+    typealias InspectPayload = com.microtag.inspect.InspectPayload
 
     fun createNotificationChannel(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -89,7 +93,7 @@ object MicrotagReminder {
             .addAction(0, "Dismiss", dismissPendingIntent)
 
         if (customIcon != null) {
-            builder.setSmallIcon(androidx.core.graphics.drawable.IconCompat.createFromIcon(customIcon)!!)
+            builder.setSmallIcon(IconCompat.createFromIcon(customIcon)!!)
         } else {
             builder.setSmallIcon(resolveDrawable(context, iconName))
         }
