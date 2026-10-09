@@ -4,17 +4,22 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import com.microtag.core.MicrotagPrefs
 import com.microtag.core.MicrotagReminder
 import com.microtag.rules.RuleEngine
 import com.microtag.shizuku.ShizukuClipboardWatcher
 
 class MicrotagNotificationService : NotificationListenerService() {
 
+    private lateinit var prefs: MicrotagPrefs
+
     override fun onCreate() {
         super.onCreate()
+        prefs = MicrotagPrefs(applicationContext)
         RuleEngine.init(applicationContext)
-        // Keep Shizuku clipboard hook running continuously in background
-        ShizukuClipboardWatcher.init(applicationContext)
+        if (prefs.isAppEnabled(MicrotagPrefs.KEY_CLIPBOARD)) {
+            ShizukuClipboardWatcher.init(applicationContext)
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -31,6 +36,7 @@ class MicrotagNotificationService : NotificationListenerService() {
         // 1. Evaluate Dynamic Rules (custom_rules.json)
         val match = RuleEngine.evaluate(pkg, title, text)
         if (match != null) {
+            prefs.incrementInterceptCount()
             MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = match.pillText,
@@ -43,9 +49,29 @@ class MicrotagNotificationService : NotificationListenerService() {
             return
         }
 
-        // 2. Specialized Multi-App Parser (Strava, Discord, SMS OTP, System Downloads)
+        // 2. Comprehensive Capsule Parser
         val parsed = CapsuleParser.parse(sbn)
         if (parsed != null) {
+            
+            // Check App Toggles from Dashboard Preferences
+            val isStrava = pkg == "com.strava" || pkg.contains("workout") || pkg.contains("fitness")
+            val isDiscord = pkg == "com.discord" || pkg.contains("discord")
+            val isOtp = pkg.contains("messaging") || pkg.contains("sms") || pkg.contains("google.android.apps.messaging")
+            val isProton = pkg == "ch.protonvpn.android"
+            val isProgress = extras.containsKey(Notification.EXTRA_PROGRESS) && pkg != "ch.protonvpn.android"
+
+            if ((isStrava && !prefs.isAppEnabled(MicrotagPrefs.KEY_STRAVA)) ||
+                (isDiscord && !prefs.isAppEnabled(MicrotagPrefs.KEY_DISCORD)) ||
+                (isOtp && !prefs.isAppEnabled(MicrotagPrefs.KEY_OTP)) ||
+                (isProton && !prefs.isAppEnabled(MicrotagPrefs.KEY_PROTON)) ||
+                (isProgress && !prefs.isAppEnabled(MicrotagPrefs.KEY_DOWNLOADS))
+            ) {
+                return
+            }
+
+            prefs.incrementInterceptCount()
+            
+            // Forward everything, including native buttons and chronometers, to the engine
             MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = parsed.pillText,
@@ -55,21 +81,20 @@ class MicrotagNotificationService : NotificationListenerService() {
                 timeoutSeconds = parsed.timeoutSeconds,
                 iconName = parsed.iconName,
                 customIcon = null,
-                detailPayload = parsed.payload
+                detailPayload = parsed.payload,
+                chronometerTargetMillis = parsed.chronometerTargetMillis,
+                actions = parsed.actions
             )
             return
         }
 
-        // 3. System Hooks & Ongoing Events Fall-Through
-        when (pkg) {
-            "ch.protonvpn.android" -> handleProtonVpn(sbn, title, text)
-            "com.microsoft.teams" -> handleTeams(sbn, title, text)
-            "com.google.android.apps.maps" -> handleMaps(sbn, title, text)
-            "com.android.providers.downloads" -> handleDownloads(sbn, notif, title, text)
-            else -> {
-                if (notif.extras.containsKey(Notification.EXTRA_PROGRESS)) {
-                    handleGenericProgress(sbn, notif, title, text)
-                }
+        // 3. Simple Fallbacks (Teams/Maps)
+        when {
+            pkg == "com.microsoft.teams" && prefs.isAppEnabled(MicrotagPrefs.KEY_TEAMS) -> {
+                handleTeams(sbn, title, text)
+            }
+            pkg == "com.google.android.apps.maps" && prefs.isAppEnabled(MicrotagPrefs.KEY_MAPS) -> {
+                handleMaps(sbn, title, text)
             }
         }
     }
@@ -77,45 +102,34 @@ class MicrotagNotificationService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         if (sbn == null) return
-
+        
+        // Critically important: Stop the recursive minute ticker if the calendar event is dismissed
+        MicrotagReminder.cancelTicker(sbn.id)
+        
         if (sbn.isOngoing) {
             val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(sbn.id)
         }
     }
 
-    private fun handleProtonVpn(sbn: StatusBarNotification, title: String, text: String) {
-        val isConnected = text.contains("Connected", ignoreCase = true) || title.contains("Connected", ignoreCase = true)
-        if (!isConnected) return
-
-        val serverMatch = Regex("""(?i)(?:to\s+)?([A-Z]{2}(?:-[A-Z]+)?#\d+)""").find("$title $text")
-        val nodeName = serverMatch?.groupValues?.get(1) ?: "VPN Active"
-
-        MicrotagReminder.showCapsule(
-            context = applicationContext,
-            pillText = nodeName,
-            title = "Proton VPN",
-            content = "Encrypted tunnel active • $nodeName",
-            notificationId = sbn.id,
-            timeoutSeconds = 8
-        )
-    }
-
     private fun handleTeams(sbn: StatusBarNotification, title: String, text: String) {
         if (title.contains("meeting", ignoreCase = true) || text.contains("call", ignoreCase = true)) {
+            prefs.incrementInterceptCount()
             MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = "Teams Live",
                 title = title.ifBlank { "Microsoft Teams" },
                 content = text,
                 notificationId = sbn.id,
-                timeoutSeconds = 15
+                timeoutSeconds = 15,
+                actions = sbn.notification.actions?.toList() ?: emptyList() // Pass native actions
             )
         }
     }
 
     private fun handleMaps(sbn: StatusBarNotification, title: String, text: String) {
         if (sbn.isOngoing) {
+            prefs.incrementInterceptCount()
             MicrotagReminder.showCapsule(
                 context = applicationContext,
                 pillText = "Nav",
@@ -123,39 +137,6 @@ class MicrotagNotificationService : NotificationListenerService() {
                 content = text,
                 notificationId = sbn.id,
                 timeoutSeconds = 10
-            )
-        }
-    }
-
-    private fun handleDownloads(sbn: StatusBarNotification, notif: Notification, title: String, text: String) {
-        val max = notif.extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
-        val progress = notif.extras.getInt(Notification.EXTRA_PROGRESS, 0)
-
-        if (max > 0 && progress < max) {
-            val pct = ((progress.toDouble() / max) * 100).toInt()
-            MicrotagReminder.showCapsule(
-                context = applicationContext,
-                pillText = "$pct%",
-                title = title.ifBlank { "Downloading" },
-                content = "$progress of $max",
-                notificationId = sbn.id,
-                timeoutSeconds = 5
-            )
-        }
-    }
-
-    private fun handleGenericProgress(sbn: StatusBarNotification, notif: Notification, title: String, text: String) {
-        val max = notif.extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
-        val current = notif.extras.getInt(Notification.EXTRA_PROGRESS, 0)
-        if (max > 0 && current < max) {
-            val pct = ((current.toDouble() / max) * 100).toInt()
-            MicrotagReminder.showCapsule(
-                context = applicationContext,
-                pillText = "$pct%",
-                title = title,
-                content = text,
-                notificationId = sbn.id,
-                timeoutSeconds = 4
             )
         }
     }
