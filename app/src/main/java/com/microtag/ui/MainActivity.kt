@@ -19,7 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -142,7 +142,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
             modifier = Modifier.offset(y = arrowOffset.dp)
         ) {
             Icon(
-                imageVector = Icons.Default.ArrowUpward,
+                imageVector = Icons.Default.KeyboardArrowUp,
                 contentDescription = "Cutout target",
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(36.dp)
