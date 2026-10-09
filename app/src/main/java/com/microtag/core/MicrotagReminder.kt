@@ -7,7 +7,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
-import android.os.Bundle
 import android.util.Log
 import com.microtag.R
 import com.microtag.inspect.InspectPayload
@@ -15,10 +14,12 @@ import com.microtag.inspect.ProcessTextActivity
 
 object MicrotagReminder {
     private const val TAG = "MicrotagReminder"
-    private const val CHANNEL_ID = "microtag_live_capsules_v2"
+    private const val CHANNEL_ID = "microtag_live_capsules_v3"
     private const val CHANNEL_NAME = "Live Status Capsules"
+    
+    // Android 16 (API 36) Promoted Ongoing Extra Key
+    private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
 
-    // Factory bridge preserving standalone InspectPayload modularity
     fun InspectPayload(
         domain: String = "",
         title: String = "",
@@ -100,20 +101,17 @@ object MicrotagReminder {
             )
         }
 
-        // Native platform Icon resolution
         val finalIcon = customIcon ?: run {
             val resId = resolveDrawable(context, iconName)
             Icon.createWithResource(context, resId)
         }
 
-        // Native platform builder directly (bypasses NotificationCompat wrappers)
         val builder = Notification.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
-            .setSubText(pillText)
             .setSmallIcon(finalIcon)
             .setOngoing(true)
-            .setCategory(Notification.CATEGORY_WORKOUT) // Primary category for Live Updates status bar chip promotion
+            .setCategory(Notification.CATEGORY_WORKOUT)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .addAction(
@@ -132,33 +130,23 @@ object MicrotagReminder {
             builder.setTimeoutAfter(timeoutSeconds * 1000L)
         }
 
-        // Live Updates / Rich Ongoing extras
-        val liveExtras = Bundle().apply {
-            putString("android.substName", pillText)
-            putCharSequence("android.ongoingActivity.shortText", pillText)
-            putBoolean("android.ongoingActivity.isPromoted", true)
-            putInt("android.ongoingActivity.style", 1)
-        }
-        builder.addExtras(liveExtras)
-
-        // Attach OngoingActivityStyle directly onto the native builder
+        // ==========================================
+        // Android 16 (API 36) Native Live Updates Configuration
+        // ==========================================
+        
         try {
-            val styleClass = Class.forName("android.app.Notification\$OngoingActivityStyle")
-            val styleInstance = styleClass.getConstructor().newInstance()
-
-            try {
-                val setShortTextMethod = styleClass.getMethod("setShortText", CharSequence::class.java)
-                setShortTextMethod.invoke(styleInstance, pillText)
-            } catch (e: Exception) {
-                Log.w(TAG, "setShortText not present on OngoingActivityStyle: ${e.message}")
-            }
-
-            // Public method call on Notification.Builder
-            builder.setStyle(styleInstance as Notification.Style)
-            Log.d(TAG, "Successfully attached OngoingActivityStyle to native builder.")
-        } catch (e: Throwable) {
-            Log.e(TAG, "OngoingActivityStyle reflection error: ${e.message}", e)
+            // Apply the short critical text to populate the Status Bar Chip
+            val setShortCriticalTextMethod = Notification.Builder::class.java.getMethod("setShortCriticalText", CharSequence::class.java)
+            setShortCriticalTextMethod.invoke(builder, pillText)
+        } catch (e: Exception) {
+            Log.w(TAG, "setShortCriticalText not available: ${e.message}")
         }
+        
+        // Request OS-level promotion directly in the extras bundle
+        builder.extras.putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true)
+
+        // Ensure fallback compatibility for heavily customized vendor skins (ColorOS/HyperOS)
+        builder.extras.putString("oplus.liveNotificationType", "capsule")
 
         manager.notify(notificationId, builder.build())
     }
