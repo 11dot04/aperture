@@ -7,10 +7,14 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.microtag.R
 import com.microtag.inspect.InspectPayload
 import com.microtag.inspect.ProcessTextActivity
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.ceil
 
 object MicrotagReminder {
     private const val TAG = "MicrotagReminder"
@@ -19,6 +23,14 @@ object MicrotagReminder {
     
     // Android 16 (API 36) Promoted Ongoing Extra Key
     private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
+
+    // Engine to manage per-minute chip updates for calendar/events without IPC spam
+    private val handler = Handler(Looper.getMainLooper())
+    private val tickerTasks = ConcurrentHashMap<Int, Runnable>()
+
+    fun cancelTicker(notificationId: Int) {
+        tickerTasks.remove(notificationId)?.let { handler.removeCallbacks(it) }
+    }
 
     fun InspectPayload(
         domain: String = "",
@@ -72,11 +84,43 @@ object MicrotagReminder {
         timeoutSeconds: Int = 0,
         iconName: String? = null,
         customIcon: Icon? = null,
-        detailPayload: InspectPayload? = null
+        detailPayload: InspectPayload? = null,
+        chronometerTargetMillis: Long? = null,
+        actions: List<Notification.Action> = emptyList()
     ) {
         createNotificationChannel(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+        // 1. Process the Per-Minute Ticker Template
+        cancelTicker(notificationId)
+        var currentPillText = pillText
+
+        if (chronometerTargetMillis != null && pillText.contains("{MINS}")) {
+            val now = System.currentTimeMillis()
+            val diffMillis = chronometerTargetMillis - now
+
+            if (diffMillis > 0) {
+                // Round up so 14m 10s shows as "in 15m"
+                val minsLeft = ceil(diffMillis / 60000.0).toInt()
+                currentPillText = pillText.replace("{MINS}", minsLeft.toString())
+
+                // Schedule exactly at the minute rollover boundary
+                val delayToNextMinute = (diffMillis % 60000) + 50L
+                val task = Runnable {
+                    showCapsule(
+                        context, pillText, title, content, notificationId, 
+                        timeoutSeconds, iconName, customIcon, detailPayload, 
+                        chronometerTargetMillis, actions
+                    )
+                }
+                tickerTasks[notificationId] = task
+                handler.postDelayed(task, delayToNextMinute)
+            } else {
+                currentPillText = "Now"
+            }
+        }
+
+        // 2. Build the Notification Intents
         val dismissIntent = Intent(context, CapsuleDismissReceiver::class.java).apply {
             putExtra("notification_id", notificationId)
         }
@@ -106,6 +150,7 @@ object MicrotagReminder {
             Icon.createWithResource(context, resId)
         }
 
+        // 3. Construct Android 16 Native Builder
         val builder = Notification.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
@@ -114,13 +159,24 @@ object MicrotagReminder {
             .setCategory(Notification.CATEGORY_WORKOUT)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
-            .addAction(
-                Notification.Action.Builder(
-                    null,
-                    "Dismiss",
-                    dismissPendingIntent
-                ).build()
+
+        // Let the expanded card run the live per-second ticking chronometer 
+        if (chronometerTargetMillis != null) {
+            builder.setWhen(chronometerTargetMillis)
+                .setShowWhen(true)
+                .setUsesChronometer(true)
+                .setChronometerCountDown(true)
+        }
+
+        // Attach native actions (Pause, Next, Disconnect, etc.)
+        actions.forEach { builder.addAction(it) }
+        
+        // Provide a fallback dismiss button if no actions were mapped
+        if (actions.isEmpty()) {
+            builder.addAction(
+                Notification.Action.Builder(null, "Dismiss", dismissPendingIntent).build()
             )
+        }
 
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)
@@ -130,22 +186,15 @@ object MicrotagReminder {
             builder.setTimeoutAfter(timeoutSeconds * 1000L)
         }
 
-        // ==========================================
-        // Android 16 (API 36) Native Live Updates Configuration
-        // ==========================================
-        
+        // 4. Attach Live Status Promotion
         try {
-            // Apply the short critical text to populate the Status Bar Chip
             val setShortCriticalTextMethod = Notification.Builder::class.java.getMethod("setShortCriticalText", CharSequence::class.java)
-            setShortCriticalTextMethod.invoke(builder, pillText)
+            setShortCriticalTextMethod.invoke(builder, currentPillText)
         } catch (e: Exception) {
             Log.w(TAG, "setShortCriticalText not available: ${e.message}")
         }
         
-        // Request OS-level promotion directly in the extras bundle
         builder.extras.putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true)
-
-        // Ensure fallback compatibility for heavily customized vendor skins (ColorOS/HyperOS)
         builder.extras.putString("oplus.liveNotificationType", "capsule")
 
         manager.notify(notificationId, builder.build())
