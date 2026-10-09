@@ -18,7 +18,30 @@ object MicrotagReminder {
     private const val CHANNEL_ID = "microtag_live_capsules"
     private const val CHANNEL_NAME = "Live Status Capsules"
 
-    typealias InspectPayload = com.microtag.inspect.InspectPayload
+    // Factory bridge: retains modularity while allowing MicrotagReminder.InspectPayload(...) call syntax
+    fun InspectPayload(
+        domain: String = "",
+        title: String = "",
+        subtitle: String = "",
+        fullContent: String = "",
+        copyText: String = "",
+        primaryText: String = "",
+        secondaryText: String = "",
+        actionType: String = "COPY",
+        copyContent: String = "",
+        extraData: String = ""
+    ): InspectPayload = com.microtag.inspect.InspectPayload(
+        domain = domain,
+        title = title,
+        subtitle = subtitle,
+        fullContent = fullContent,
+        copyText = copyText,
+        primaryText = primaryText,
+        secondaryText = secondaryText,
+        actionType = actionType,
+        copyContent = copyContent,
+        extraData = extraData
+    )
 
     fun createNotificationChannel(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -74,12 +97,11 @@ object MicrotagReminder {
             )
         }
 
-        // Android 16 Live Updates System Keys
         val liveExtras = Bundle().apply {
             putString("android.substName", pillText)
             putCharSequence("android.ongoingActivity.shortText", pillText)
             putBoolean("android.ongoingActivity.isPromoted", true)
-            putInt("android.ongoingActivity.style", 1) // Active live chip container
+            putInt("android.ongoingActivity.style", 1)
         }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -88,7 +110,7 @@ object MicrotagReminder {
             .setSubText(pillText)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_WORKOUT) // Android 16 prioritizes WORKOUT/NAVIGATION for status bar chips
+            .setCategory(NotificationCompat.CATEGORY_WORKOUT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .addExtras(liveExtras)
@@ -110,27 +132,23 @@ object MicrotagReminder {
 
         val notification = builder.build()
 
-        // Attach Android 16 OngoingActivityStyle via framework Builder reflection
         try {
             val styleClass = Class.forName("android.app.Notification\$OngoingActivityStyle")
             val styleInstance = styleClass.getConstructor().newInstance()
             val setShortTextMethod = styleClass.getMethod("setShortText", CharSequence::class.java)
             setShortTextMethod.invoke(styleInstance, pillText)
 
-            // Reconstruct platform builder to bind style cleanly
             val platformBuilderClass = Notification.Builder::class.java
             val recoverBuilderMethod = platformBuilderClass.getMethod("recoverBuilder", Context::class.java, Notification::class.java)
             val platformBuilder = recoverBuilderMethod.invoke(null, context, notification) as Notification.Builder
-            
+
             val setStyleMethod = platformBuilderClass.getMethod("setStyle", Notification.Style::class.java)
             setStyleMethod.invoke(platformBuilder, styleInstance)
-            
+
             val styledNotification = platformBuilder.build()
             manager.notify(notificationId, styledNotification)
             return
-        } catch (_: Throwable) {
-            // Falls back to high-priority liveExtras notification
-        }
+        } catch (_: Throwable) {}
 
         manager.notify(notificationId, notification)
     }
