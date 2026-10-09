@@ -110,6 +110,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.microtag.core.MicrotagPrefs
 import com.microtag.core.MicrotagReminder
+import com.microtag.listener.MicrotagLogActivity
 import com.microtag.rules.RuleEngine
 import com.microtag.shizuku.ShizukuClipboardWatcher
 import rikka.shizuku.Shizuku
