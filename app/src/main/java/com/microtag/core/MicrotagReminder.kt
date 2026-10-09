@@ -8,17 +8,17 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Bundle
-import androidx.core.app.NotificationCompat
-import androidx.core.graphics.drawable.IconCompat
+import android.util.Log
 import com.microtag.R
 import com.microtag.inspect.InspectPayload
 import com.microtag.inspect.ProcessTextActivity
 
 object MicrotagReminder {
-    private const val CHANNEL_ID = "microtag_live_capsules"
+    private const val TAG = "MicrotagReminder"
+    private const val CHANNEL_ID = "microtag_live_capsules_v2"
     private const val CHANNEL_NAME = "Live Status Capsules"
 
-    // Factory bridge: retains modularity while allowing MicrotagReminder.InspectPayload(...) call syntax
+    // Factory bridge preserving standalone InspectPayload modularity
     fun InspectPayload(
         domain: String = "",
         title: String = "",
@@ -45,13 +45,16 @@ object MicrotagReminder {
 
     fun createNotificationChannel(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val existing = manager.getNotificationChannel(CHANNEL_ID)
+        if (existing != null) return
+
         val channel = NotificationChannel(
             CHANNEL_ID,
             CHANNEL_NAME,
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "Live Updates and ongoing activity status capsules"
-            setShowBadge(false)
+            setShowBadge(true)
             enableVibration(false)
             setSound(null, null)
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -97,30 +100,29 @@ object MicrotagReminder {
             )
         }
 
-        val liveExtras = Bundle().apply {
-            putString("android.substName", pillText)
-            putCharSequence("android.ongoingActivity.shortText", pillText)
-            putBoolean("android.ongoingActivity.isPromoted", true)
-            putInt("android.ongoingActivity.style", 1)
+        // Native platform Icon resolution
+        val finalIcon = customIcon ?: run {
+            val resId = resolveDrawable(context, iconName)
+            Icon.createWithResource(context, resId)
         }
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        // Native platform builder directly (bypasses NotificationCompat wrappers)
+        val builder = Notification.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(content)
             .setSubText(pillText)
+            .setSmallIcon(finalIcon)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_WORKOUT)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(Notification.CATEGORY_WORKOUT) // Primary category for Live Updates status bar chip promotion
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
-            .addExtras(liveExtras)
-            .addAction(0, "Dismiss", dismissPendingIntent)
-
-        if (customIcon != null) {
-            builder.setSmallIcon(IconCompat.createFromIcon(customIcon)!!)
-        } else {
-            builder.setSmallIcon(resolveDrawable(context, iconName))
-        }
+            .addAction(
+                Notification.Action.Builder(
+                    null,
+                    "Dismiss",
+                    dismissPendingIntent
+                ).build()
+            )
 
         if (contentPendingIntent != null) {
             builder.setContentIntent(contentPendingIntent)
@@ -130,27 +132,35 @@ object MicrotagReminder {
             builder.setTimeoutAfter(timeoutSeconds * 1000L)
         }
 
-        val notification = builder.build()
+        // Live Updates / Rich Ongoing extras
+        val liveExtras = Bundle().apply {
+            putString("android.substName", pillText)
+            putCharSequence("android.ongoingActivity.shortText", pillText)
+            putBoolean("android.ongoingActivity.isPromoted", true)
+            putInt("android.ongoingActivity.style", 1)
+        }
+        builder.addExtras(liveExtras)
 
+        // Attach OngoingActivityStyle directly onto the native builder
         try {
             val styleClass = Class.forName("android.app.Notification\$OngoingActivityStyle")
             val styleInstance = styleClass.getConstructor().newInstance()
-            val setShortTextMethod = styleClass.getMethod("setShortText", CharSequence::class.java)
-            setShortTextMethod.invoke(styleInstance, pillText)
 
-            val platformBuilderClass = Notification.Builder::class.java
-            val recoverBuilderMethod = platformBuilderClass.getMethod("recoverBuilder", Context::class.java, Notification::class.java)
-            val platformBuilder = recoverBuilderMethod.invoke(null, context, notification) as Notification.Builder
+            try {
+                val setShortTextMethod = styleClass.getMethod("setShortText", CharSequence::class.java)
+                setShortTextMethod.invoke(styleInstance, pillText)
+            } catch (e: Exception) {
+                Log.w(TAG, "setShortText not present on OngoingActivityStyle: ${e.message}")
+            }
 
-            val setStyleMethod = platformBuilderClass.getMethod("setStyle", Notification.Style::class.java)
-            setStyleMethod.invoke(platformBuilder, styleInstance)
+            // Public method call on Notification.Builder
+            builder.setStyle(styleInstance as Notification.Style)
+            Log.d(TAG, "Successfully attached OngoingActivityStyle to native builder.")
+        } catch (e: Throwable) {
+            Log.e(TAG, "OngoingActivityStyle reflection error: ${e.message}", e)
+        }
 
-            val styledNotification = platformBuilder.build()
-            manager.notify(notificationId, styledNotification)
-            return
-        } catch (_: Throwable) {}
-
-        manager.notify(notificationId, notification)
+        manager.notify(notificationId, builder.build())
     }
 
     private fun resolveDrawable(context: Context, name: String?): Int {
