@@ -18,11 +18,14 @@ android {
     }
 
     signingConfigs {
-        create("releaseKey") {
-            storeFile = file("release.keystore")
-            storePassword = "microtagpass"
-            keyAlias = "microtag"
-            keyPassword = "microtagpass"
+        getByName("debug") {
+            val localKeystore = rootProject.file("keystore/signing.jks")
+            if (localKeystore.exists()) {
+                storeFile = localKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
