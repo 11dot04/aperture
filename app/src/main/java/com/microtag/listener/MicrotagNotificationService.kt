@@ -26,6 +26,9 @@ class MicrotagNotificationService : NotificationListenerService() {
 
     // sbn.key -> signature of what we last showed (skip identical re-posts)
     private val lastShown = ConcurrentHashMap<String, String>()
+    // sbn.key -> last title/content we showed, and when we last posted (for throttling)
+    private val lastContent = ConcurrentHashMap<String, String>()
+    private val lastShownAt = ConcurrentHashMap<String, Long>()
     // sbn.key -> capsule notification id we posted for it
     private val capsuleIds = ConcurrentHashMap<String, Int>()
     // keys whose capsule expires by itself (timeoutSeconds > 0)
@@ -51,6 +54,7 @@ class MicrotagNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "Listener connected")
+        logBuildInfo()
         handler.removeCallbacks(pollTask)
         handler.post(pollTask)
     }
@@ -167,16 +171,27 @@ class MicrotagNotificationService : NotificationListenerService() {
                 return
             }
 
-            val signature = "${parsed.pillText}|${parsed.title}|${parsed.content}|${parsed.iconName}"
-            if (lastShown[sbn.key] == signature) {
-                logDecision(sbn, "PARSER", Decision.UNCHANGED, "parsed, same as last shown",
+            // A pill/icon change posts immediately. Title/content-only changes (e.g. Strava's
+            // per-second timer) are throttled so we don't re-post the capsule every second.
+            val headline = "${parsed.pillText}|${parsed.iconName}"
+            val content = "${parsed.title}|${parsed.content}"
+            val now = System.currentTimeMillis()
+            val headlineSame = lastShown[sbn.key] == headline
+            val contentSame = lastContent[sbn.key] == content
+            val recentlyPosted = now - (lastShownAt[sbn.key] ?: 0L) < CONTENT_REFRESH_MS
+            if (headlineSame && (contentSame || recentlyPosted)) {
+                logDecision(sbn, "PARSER", Decision.UNCHANGED,
+                    if (contentSame) "same as last shown" else "same pill, content refresh throttled",
                     parsed.pillText, parsed.iconName)
                 return
             }
             Log.d(TAG, "PARSER $pkg pill='${parsed.pillText}' icon=${parsed.iconName}")
-            logDecision(sbn, "PARSER", Decision.PROMOTED, "parser produced a capsule",
+            logDecision(sbn, "PARSER", Decision.PROMOTED,
+                if (headlineSame) "content refresh" else "parser produced a capsule",
                 parsed.pillText, parsed.iconName)
-            lastShown[sbn.key] = signature
+            lastShown[sbn.key] = headline
+            lastContent[sbn.key] = content
+            lastShownAt[sbn.key] = now
             capsuleIds[sbn.key] = id
             trackTimeout(sbn.key, parsed.timeoutSeconds)
 
@@ -283,6 +298,8 @@ class MicrotagNotificationService : NotificationListenerService() {
     private fun clearCapsule(key: String) {
         val id = capsuleIds.remove(key)
         lastShown.remove(key)
+        lastContent.remove(key)
+        lastShownAt.remove(key)
         timedKeys.remove(key)
         if (id != null) {
             MicrotagReminder.cancelTicker(id)
@@ -315,6 +332,8 @@ class MicrotagNotificationService : NotificationListenerService() {
         val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val sub = extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
+        // UNCHANGED entries drop title/text so per-second timers don't defeat the log's repeat-collapsing.
+        val quiet = decision == Decision.UNCHANGED
         MicrotagLog.add(
             key = sbn.key,
             pkg = sbn.packageName.orEmpty(),
@@ -323,9 +342,33 @@ class MicrotagNotificationService : NotificationListenerService() {
             reason = reason,
             pill = pill,
             icon = icon,
-            title = title,
-            text = if (sub.isNotBlank()) "$text | sub: $sub" else text,
+            title = if (quiet) "" else title,
+            text = if (quiet) "" else if (sub.isNotBlank()) "$text | sub: $sub" else text,
             meta = metaOf(sbn)
+        )
+    }
+
+    // Proves which build is running and whether the app was truly reinstalled:
+    // if "firstInstall" stays old after an uninstall, the data/package was never removed.
+    private fun logBuildInfo() {
+        val info = runCatching { packageManager.getPackageInfo(packageName, 0) }.getOrNull()
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val meta = if (info != null) {
+            "version=${info.versionName} code=${info.longVersionCode} " +
+                    "firstInstall=${fmt.format(java.util.Date(info.firstInstallTime))} " +
+                    "lastUpdate=${fmt.format(java.util.Date(info.lastUpdateTime))} " +
+                    "parser=r4 pillAsTitle=true"
+        } else {
+            "package info unavailable"
+        }
+        MicrotagLog.add(
+            key = "service",
+            pkg = packageName,
+            path = "SYSTEM",
+            decision = Decision.INFO,
+            reason = "listener connected",
+            title = "build info",
+            meta = meta
         )
     }
 
@@ -344,5 +387,6 @@ class MicrotagNotificationService : NotificationListenerService() {
     companion object {
         private const val TAG = "MicrotagListener"
         private const val POLL_INTERVAL_MS = 3_000L
+        private const val CONTENT_REFRESH_MS = 10_000L
     }
 }
