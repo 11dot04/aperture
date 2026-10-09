@@ -2,8 +2,8 @@ package com.microtag.listener
 
 import android.app.Notification
 import android.service.notification.StatusBarNotification
-import com.microtag.R
 import com.microtag.inspect.InspectPayload
+import java.util.Calendar
 
 data class ParsedCapsule(
     val pillText: String,
@@ -12,7 +12,9 @@ data class ParsedCapsule(
     val iconName: String? = null,
     val iconRes: Int = 0,
     val timeoutSeconds: Int = 0,
-    val payload: InspectPayload? = null
+    val chronometerTargetMillis: Long? = null,
+    val payload: InspectPayload? = null,
+    val actions: List<Notification.Action> = emptyList()
 )
 
 object CapsuleParser {
@@ -28,59 +30,206 @@ object CapsuleParser {
         val combined = "$title $text $subText".trim()
 
         return when {
-            // 1. STRAVA & RUNNING WORKOUTS
+            extras.containsKey(Notification.EXTRA_MEDIA_SESSION) -> {
+                parseMedia(notif, title, text, subText)
+            }
+            pkg == "com.kieronquinn.app.ambientmusicmod" || pkg.contains("intelligence.sense") -> {
+                parseAmbientMusic(notif, title, text)
+            }
+            pkg == "com.google.android.calendar" || pkg.contains("calendar") -> {
+                parseCalendar(notif, title, text)
+            }
+            pkg == "com.android.bluetooth" || pkg == "com.android.systemui" -> {
+                parseSystemUi(notif, title, text, combined)
+            }
+            pkg == "ch.protonvpn.android" -> {
+                parseProtonVpn(notif, title, text)
+            }
             pkg == "com.strava" || pkg.contains("workout") || pkg.contains("fitness") -> {
-                parseStrava(combined, title, text)
+                parseStrava(notif, combined, title, text)
             }
-
-            // 2. DISCORD MENTIONS & DMS
             pkg == "com.discord" || pkg.contains("discord") -> {
-                parseDiscord(combined, title, text)
+                parseDiscord(notif, combined, title, text)
             }
-
-            // 3. OTP & SMS CODES
+            pkg.contains("weather") || pkg == "com.google.android.googlequicksearchbox" -> {
+                parseWeather(combined, title, text)
+            }
             pkg.contains("messaging") || pkg.contains("sms") || pkg.contains("google.android.apps.messaging") -> {
                 parseOtp(combined, title, text)
             }
-
-            // 4. ACTIVE DOWNLOADS & PROGRESS
             extras.containsKey(Notification.EXTRA_PROGRESS) -> {
                 parseProgress(notif, title, text)
             }
-
             else -> null
         }
     }
 
-    private fun parseStrava(combined: String, title: String, text: String): ParsedCapsule? {
-        // Extract split pace (e.g. 5:12 /km) or elapsed time
-        val paceMatch = Regex("""\b\d{1,2}:\d{2}(?:\s?/\s?(?:km|mi))?\b""").find(combined)
-        val distanceMatch = Regex("""\b\d+(?:\.\d+)?\s?(?:km|mi)\b""", RegexOption.IGNORE_CASE).find(combined)
-
-        val pill = when {
-            paceMatch != null && distanceMatch != null -> "${distanceMatch.value} • ${paceMatch.value}"
-            distanceMatch != null -> distanceMatch.value
-            paceMatch != null -> paceMatch.value
-            else -> "Live Run"
+    private fun cleanSongTitle(rawTitle: String, artist: String): String {
+        var cleaned = rawTitle.replace(Regex("""\s*[\(\[].*?[\)\]]"""), "").trim()
+        
+        if (cleaned.contains("-") && artist.isNotBlank()) {
+            val parts = cleaned.split("-").map { it.trim() }
+            val artistLower = artist.lowercase()
+            
+            val songPart = parts.firstOrNull { part ->
+                !part.lowercase().contains(artistLower) && !artistLower.contains(part.lowercase())
+            }
+            if (songPart != null) {
+                cleaned = songPart
+            }
         }
+        return cleaned.ifBlank { rawTitle }.take(14)
+    }
+
+    private fun parseMedia(notif: Notification, title: String, text: String, subText: String): ParsedCapsule? {
+        if (title.isBlank()) return null
+        val artist = text.ifBlank { subText } 
+        val songName = cleanSongTitle(title, artist)
 
         return ParsedCapsule(
-            pillText = pill,
-            title = title.ifBlank { "Strava Workout" },
+            pillText = songName,
+            title = title,
             content = text,
-            iconName = "ic_capsule_run",
-            timeoutSeconds = 0 // Ongoing until stopped
+            iconName = "ic_capsule_music",
+            timeoutSeconds = 6,
+            actions = notif.actions?.toList() ?: emptyList()
         )
     }
 
-    private fun parseDiscord(combined: String, title: String, text: String): ParsedCapsule? {
+    private fun parseAmbientMusic(notif: Notification, title: String, text: String): ParsedCapsule? {
+        val rawSong = title.replace("Now Playing", "", ignoreCase = true).trim().ifBlank { 
+            text.split("-").firstOrNull()?.trim() ?: "Music" 
+        }
+        val songName = cleanSongTitle(rawSong, "")
+
+        return ParsedCapsule(
+            pillText = songName,
+            title = "Now Playing",
+            content = rawSong,
+            iconName = "ic_capsule_music",
+            timeoutSeconds = 8,
+            actions = notif.actions?.toList() ?: emptyList()
+        )
+    }
+
+    private fun parseCalendar(notif: Notification, title: String, text: String): ParsedCapsule? {
+        val timeMatch = Regex("""\b(\d{1,2}):(\d{2})\s?(AM|PM|am|pm)?\b""").find(text)
+        var targetMillis: Long? = null
+        
+        if (timeMatch != null) {
+            val hours = timeMatch.groupValues[1].toInt()
+            val minutes = timeMatch.groupValues[2].toInt()
+            val ampm = timeMatch.groupValues.getOrNull(3)?.uppercase()
+            
+            val calendar = Calendar.getInstance()
+            val now = calendar.timeInMillis
+            
+            var targetHourOfDay = hours
+            if (ampm == "PM" && hours < 12) targetHourOfDay += 12
+            if (ampm == "AM" && hours == 12) targetHourOfDay = 0
+            
+            calendar.set(Calendar.HOUR_OF_DAY, targetHourOfDay)
+            calendar.set(Calendar.MINUTE, minutes)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            
+            targetMillis = calendar.timeInMillis
+            if (targetMillis < now) {
+                calendar.add(Calendar.DAY_OF_YEAR, 1)
+                targetMillis = calendar.timeInMillis
+            }
+        }
+
+        return ParsedCapsule(
+            pillText = if (targetMillis != null) "in {MINS}m" else "Event",
+            title = title,
+            content = text,
+            iconName = "ic_capsule_calendar",
+            timeoutSeconds = 0,
+            chronometerTargetMillis = targetMillis,
+            actions = notif.actions?.toList() ?: emptyList()
+        )
+    }
+
+    private fun parseSystemUi(notif: Notification, title: String, text: String, combined: String): ParsedCapsule? {
+        return when {
+            combined.contains("battery", ignoreCase = true) || combined.contains("charging", ignoreCase = true) -> {
+                val pct = Regex("""\d+%""").find(combined)?.value ?: "Power"
+                ParsedCapsule(pct, title, text, "ic_capsule_bolt", timeoutSeconds = 5)
+            }
+            combined.contains("bluetooth", ignoreCase = true) || combined.contains("connected to", ignoreCase = true) -> {
+                val device = title.replace("Connected to ", "", ignoreCase = true).take(10)
+                ParsedCapsule(device, "Bluetooth", text, "ic_capsule_bluetooth", timeoutSeconds = 5, actions = notif.actions?.toList() ?: emptyList())
+            }
+            combined.contains("do not disturb", ignoreCase = true) || combined.contains("muted", ignoreCase = true) -> {
+                ParsedCapsule("DND", title, text, "ic_capsule_bell_off", timeoutSeconds = 4)
+            }
+            else -> null
+        }
+    }
+
+    private fun parseWeather(combined: String, title: String, text: String): ParsedCapsule? {
+        val tempMatch = Regex("""-?\d{1,3}°[CFcf]?""").find(combined) ?: return null
+        val cleanTemp = tempMatch.value.replace(Regex("""[CFcf]"""), "")
+
+        return ParsedCapsule(
+            pillText = cleanTemp,
+            title = title.ifBlank { "Weather" },
+            content = text,
+            iconName = "ic_capsule_cloud",
+            timeoutSeconds = 0
+        )
+    }
+
+    private fun parseStrava(notif: Notification, combined: String, title: String, text: String): ParsedCapsule? {
+        val isPaused = combined.contains("paused", ignoreCase = true) || combined.contains("暫停")
+        
+        if (isPaused) {
+            val distanceMatch = Regex("""\b\d+(?:\.\d+)?\s?(?:km|mi)\b""", RegexOption.IGNORE_CASE).find(combined)
+            val paceMatch = Regex("""\b\d{1,2}:\d{2}(?:\s?/\s?(?:km|mi))?\b""").find(combined)
+            
+            val metric = when {
+                distanceMatch != null && paceMatch != null -> "${distanceMatch.value} • ${paceMatch.value}"
+                distanceMatch != null -> distanceMatch.value
+                paceMatch != null -> paceMatch.value
+                else -> "Paused"
+            }
+            
+            return ParsedCapsule(
+                pillText = metric,
+                title = title.ifBlank { "Workout Paused" },
+                content = text,
+                iconName = "ic_capsule_run",
+                timeoutSeconds = 0,
+                actions = notif.actions?.toList() ?: emptyList()
+            )
+        }
+
+        return ParsedCapsule(
+            pillText = "Recording",
+            title = title.ifBlank { "Strava" },
+            content = text,
+            iconName = "ic_capsule_run",
+            timeoutSeconds = 0,
+            actions = notif.actions?.toList() ?: emptyList()
+        )
+    }
+
+    private fun parseDiscord(notif: Notification, combined: String, title: String, text: String): ParsedCapsule? {
+        val isMuted = combined.contains("muted", ignoreCase = true)
+        val isDeafened = combined.contains("deafened", ignoreCase = true)
+        val isVoice = combined.contains("voice", ignoreCase = true) || combined.contains("call", ignoreCase = true) || combined.contains("connected", ignoreCase = true)
         val hasMention = combined.contains("@") || combined.contains("mentioned", ignoreCase = true)
-        val isDm = combined.contains("sent you a message", ignoreCase = true) || !combined.contains("#")
 
         val pill = when {
-            hasMention -> "@Mention"
-            isDm -> "Discord DM"
-            else -> "Discord"
+            isDeafened -> "Deafened"
+            isMuted -> "Muted"
+            isVoice -> "On VC"
+            hasMention -> {
+                val sender = title.split(" ").firstOrNull()?.take(8) ?: "Msg"
+                "@$sender"
+            }
+            else -> "DM"
         }
 
         return ParsedCapsule(
@@ -88,20 +237,36 @@ object CapsuleParser {
             title = title.ifBlank { "Discord" },
             content = text,
             iconName = "ic_capsule_chat",
-            timeoutSeconds = 8
+            timeoutSeconds = if (isVoice || isMuted || isDeafened) 0 else 8,
+            actions = notif.actions?.toList() ?: emptyList()
+        )
+    }
+
+    private fun parseProtonVpn(notif: Notification, title: String, text: String): ParsedCapsule? {
+        if (!title.contains("Connected", ignoreCase = true)) return null
+        val server = Regex("""(?i)connected to\s+(.+)""").find(title)?.groupValues?.get(1)?.take(10) ?: "VPN"
+
+        return ParsedCapsule(
+            pillText = server,
+            title = title,
+            content = text,
+            iconName = "ic_capsule_shield", 
+            timeoutSeconds = 0, 
+            actions = notif.actions?.toList() ?: emptyList()
         )
     }
 
     private fun parseOtp(combined: String, title: String, text: String): ParsedCapsule? {
-        val otpMatch = Regex("""(?i)\b(?:otp|code|verify|código|pin)[^\d\n\r]*(\d{4,8})\b""").find(combined)
-            ?: Regex("""\b\d{4,8}\b""").find(combined)
+        val otpMatch = Regex("""(?i)(?:otp|code|pin|passcode|verification)[^\d]*\b(\d{4,8})\b""").find(combined)
+            ?: Regex("""(?i)\b(?:is|:)\s*(\d{4,8})\b""").find(combined)
+            ?: Regex("""\b(?!(?:19|20)\d{2}\b)(\d{4,8})\b""").find(combined) 
 
         val code = otpMatch?.groupValues?.lastOrNull { it.isNotBlank() } ?: return null
 
         return ParsedCapsule(
-            pillText = "OTP: $code",
+            pillText = code,
             title = "Verification Code",
-            content = text.ifBlank { "Tap to copy $code" },
+            content = text.ifBlank { "Tap to copy: $code" },
             iconName = "ic_capsule_bolt",
             timeoutSeconds = 30,
             payload = InspectPayload(
