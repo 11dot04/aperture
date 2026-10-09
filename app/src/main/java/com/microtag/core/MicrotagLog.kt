@@ -23,7 +23,8 @@ object MicrotagLog {
         UNCHANGED("🔁 UNCHANGED"),
         SKIPPED("⏭ SKIPPED"),
         IGNORED("❌ IGNORED"),
-        CLEARED("🧹 CLEARED")
+        CLEARED("🧹 CLEARED"),
+        INFO("ℹ️ INFO")
     }
 
     data class Entry(
