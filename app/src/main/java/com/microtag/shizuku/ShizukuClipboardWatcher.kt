@@ -1,19 +1,18 @@
 package com.microtag.shizuku
 
 import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
-import android.os.IInterface
+import android.os.Parcel
 import android.util.Log
 import com.microtag.inspect.ProcessTextActivity
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
-import java.lang.reflect.Proxy
 
 object ShizukuClipboardWatcher {
     private const val TAG = "MicrotagClipboard"
@@ -54,74 +53,90 @@ object ShizukuClipboardWatcher {
 
     private fun attachClipboardHook() {
         if (isListening) return
-        val context = appContext ?: return
-
         try {
-            // Get clipboard service binder via Shizuku binder wrapper
             val rawBinder = SystemServiceHelper.getSystemService(Context.CLIPBOARD_SERVICE) ?: return
             val wrappedBinder = ShizukuBinderWrapper(rawBinder)
 
-            val iClipboardClass = Class.forName("android.content.IClipboard")
-            val stubClass = Class.forName("android.content.IClipboard\$Stub")
-            val asInterface = stubClass.getMethod("asInterface", IBinder::class.java)
-            val clipboardService = asInterface.invoke(null, wrappedBinder)
-
-            val listenerClass = Class.forName("android.content.IOnPrimaryClipChangedListener")
-
-            // Dynamic proxy to bypass missing AOSP stub interfaces at compile time
-            val listenerProxy = Proxy.newProxyInstance(
-                context.classLoader,
-                arrayOf(listenerClass)
-            ) { _, method, _ ->
-                if (method.name == "dispatchPrimaryClipChanged") {
-                    fetchAndProcessClip(clipboardService)
+            // Direct Binder instance to intercept incoming IPC transactions from system_server
+            val listener = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    if (code == IBinder.FIRST_CALL_TRANSACTION) {
+                        data.enforceInterface("android.content.IOnPrimaryClipChangedListener")
+                        fetchPrimaryClip(wrappedBinder)
+                        return true
+                    }
+                    return super.onTransact(code, data, reply, flags)
                 }
-                null
-            }
 
-            // Find addPrimaryClipChangedListener on IClipboard
-            val methods = iClipboardClass.methods.filter { it.name == "addPrimaryClipChangedListener" }
-            val targetMethod = methods.firstOrNull() ?: return
-
-            val args = arrayOfNulls<Any>(targetMethod.parameterTypes.size)
-            for (i in targetMethod.parameterTypes.indices) {
-                val paramType = targetMethod.parameterTypes[i]
-                when {
-                    paramType.isAssignableFrom(listenerClass) -> args[i] = listenerProxy
-                    paramType == String::class.java -> args[i] = "com.android.shell"
-                    paramType == Int::class.javaPrimitiveType -> args[i] = 0 // USER_ALL / USER_SYSTEM
-                    paramType.name.contains("AttributionSource") -> args[i] = null
+                override fun getInterfaceDescriptor(): String {
+                    return "android.content.IOnPrimaryClipChangedListener"
                 }
             }
 
-            targetMethod.invoke(clipboardService, *args)
-            isListening = true
-            Log.d(TAG, "Privileged IClipboard listener attached successfully.")
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            try {
+                data.writeInterfaceToken("android.content.IClipboard")
+                data.writeStrongBinder(listener)
+                data.writeString("com.android.shell")
+                data.writeString(null) // attributionTag
+                data.writeInt(0)       // userId: USER_SYSTEM
+                if (Build.VERSION.SDK_INT >= 34) {
+                    data.writeInt(0)   // deviceId: DEVICE_ID_DEFAULT
+                }
+
+                val transactionCode = if (Build.VERSION.SDK_INT >= 34) {
+                    IBinder.FIRST_CALL_TRANSACTION + 6
+                } else {
+                    IBinder.FIRST_CALL_TRANSACTION + 5
+                }
+
+                wrappedBinder.transact(transactionCode, data, reply, 0)
+                reply.readException()
+                isListening = true
+                Log.d(TAG, "Privileged clipboard listener registered via Shizuku.")
+            } finally {
+                data.recycle()
+                reply.recycle()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed hooking privileged clipboard: ${e.message}", e)
         }
     }
 
-    private fun fetchAndProcessClip(clipboardService: Any) {
+    private fun fetchPrimaryClip(binder: IBinder) {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
         try {
-            val getClipMethod = clipboardService.javaClass.methods.firstOrNull { it.name == "getPrimaryClip" } ?: return
-            val args = arrayOfNulls<Any>(getClipMethod.parameterTypes.size)
-            for (i in getClipMethod.parameterTypes.indices) {
-                val paramType = getClipMethod.parameterTypes[i]
-                when {
-                    paramType == String::class.java -> args[i] = "com.android.shell"
-                    paramType == Int::class.javaPrimitiveType -> args[i] = 0
-                    paramType.name.contains("AttributionSource") -> args[i] = null
-                }
+            data.writeInterfaceToken("android.content.IClipboard")
+            data.writeString("com.android.shell")
+            data.writeString(null)
+            data.writeInt(0)
+            if (Build.VERSION.SDK_INT >= 34) {
+                data.writeInt(0)
             }
 
-            val clipData = getClipMethod.invoke(clipboardService, *args) as? ClipData ?: return
-            val text = clipData.getItemAt(0)?.coerceToText(appContext)?.toString()
-            if (!text.isNullOrBlank()) {
-                evaluateClip(text)
+            val transactionCode = if (Build.VERSION.SDK_INT >= 34) {
+                IBinder.FIRST_CALL_TRANSACTION + 3
+            } else {
+                IBinder.FIRST_CALL_TRANSACTION + 1
+            }
+
+            binder.transact(transactionCode, data, reply, 0)
+            reply.readException()
+
+            if (reply.readInt() != 0) {
+                val clipData = ClipData.CREATOR.createFromParcel(reply)
+                val text = clipData.getItemAt(0)?.coerceToText(appContext)?.toString()
+                if (!text.isNullOrBlank()) {
+                    evaluateClip(text)
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching clip: ${e.message}")
+            Log.e(TAG, "Failed reading primary clip: ${e.message}")
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
     }
 
