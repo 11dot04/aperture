@@ -1,6 +1,7 @@
 package com.microtag.listener
 
 import android.app.Notification
+import android.os.Build
 import android.service.notification.StatusBarNotification
 import com.microtag.inspect.InspectPayload
 import java.util.Calendar
@@ -18,6 +19,21 @@ data class ParsedCapsule(
 )
 
 object CapsuleParser {
+
+    private const val DISCORD_VOICE_CHANNEL_ID = "mediaConnections"
+
+    private val discordVoiceTextPattern = Regex(
+        """\bvoice\s+(?:connected|connection|channel)\b|\bin\s+call\b|\bon\s+call\b|\bconnecting\b|\bwaiting\s+for\s+voice\b""",
+        RegexOption.IGNORE_CASE
+    )
+    private val discordMutedPattern = Regex("""\bmuted\b""", RegexOption.IGNORE_CASE)
+    private val discordDeafenedPattern = Regex("""\bdeafened\b""", RegexOption.IGNORE_CASE)
+
+    private val stravaPausedPattern = Regex("""paused|暫停|暂停""", RegexOption.IGNORE_CASE)
+    private val stravaDistancePattern = Regex("""\b\d+(?:[.,]\d+)?\s?(?:km|mi)\b""", RegexOption.IGNORE_CASE)
+    private val stravaTimePattern = Regex("""\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b""")
+
+    private val protonCountryPattern = Regex("""(?i)connected\s*(?:to|:|-|–)?\s*(.+)""")
 
     fun parse(sbn: StatusBarNotification): ParsedCapsule? {
         val pkg = sbn.packageName ?: return null
@@ -181,55 +197,102 @@ object CapsuleParser {
         )
     }
 
+    // ---------------------------------------------------------------------
+    // Strava
+    //   recording        -> "Run" / "Ride" / ... / "Active"
+    //   paused / auto    -> primary metric (distance, else elapsed time)
+    // ---------------------------------------------------------------------
     private fun parseStrava(notif: Notification, combined: String, title: String, text: String): ParsedCapsule? {
-        val isPaused = combined.contains("paused", ignoreCase = true) || combined.contains("暫停")
-        
-        if (isPaused) {
-            val distanceMatch = Regex("""\b\d+(?:\.\d+)?\s?(?:km|mi)\b""", RegexOption.IGNORE_CASE).find(combined)
-            val paceMatch = Regex("""\b\d{1,2}:\d{2}(?:\s?/\s?(?:km|mi))?\b""").find(combined)
-            
-            val metric = when {
-                distanceMatch != null && paceMatch != null -> "${distanceMatch.value} • ${paceMatch.value}"
-                distanceMatch != null -> distanceMatch.value
-                paceMatch != null -> paceMatch.value
-                else -> "Paused"
-            }
-            
+        val actions = notif.actions?.toList() ?: emptyList()
+
+        if (stravaPausedPattern.containsMatchIn(combined)) {
+            val metric = stravaDistancePattern.find(combined)?.value?.replace(" ", "")
+                ?: stravaTimePattern.find(combined)?.value
+                ?: "Paused"
+
             return ParsedCapsule(
                 pillText = metric,
                 title = title.ifBlank { "Workout Paused" },
                 content = text,
                 iconName = "ic_capsule_run",
                 timeoutSeconds = 0,
-                actions = notif.actions?.toList() ?: emptyList()
+                actions = actions
             )
         }
 
         return ParsedCapsule(
-            pillText = "Recording",
+            pillText = stravaActivityLabel(combined),
             title = title.ifBlank { "Strava" },
             content = text,
             iconName = "ic_capsule_run",
             timeoutSeconds = 0,
-            actions = notif.actions?.toList() ?: emptyList()
+            actions = actions
         )
     }
 
-    private fun parseDiscord(notif: Notification, combined: String, title: String, text: String): ParsedCapsule? {
-        val isMuted = combined.contains("muted", ignoreCase = true)
-        val isDeafened = combined.contains("deafened", ignoreCase = true)
-        val isVoice = combined.contains("voice", ignoreCase = true) || combined.contains("call", ignoreCase = true) || combined.contains("connected", ignoreCase = true)
-        val hasMention = combined.contains("@") || combined.contains("mentioned", ignoreCase = true)
+    private fun stravaActivityLabel(combined: String): String {
+        val lower = combined.lowercase()
+        return when {
+            Regex("""\b(run|running)\b""").containsMatchIn(lower) -> "Run"
+            Regex("""\b(ride|riding|cycling|bike|biking)\b""").containsMatchIn(lower) -> "Ride"
+            Regex("""\bwalk(ing)?\b""").containsMatchIn(lower) -> "Walk"
+            Regex("""\bhik(e|ing)\b""").containsMatchIn(lower) -> "Hike"
+            Regex("""\bswim(ming)?\b""").containsMatchIn(lower) -> "Swim"
+            else -> "Active"
+        }
+    }
 
-        val pill = when {
-            isDeafened -> "Deafened"
-            isMuted -> "Muted"
-            isVoice -> "On VC"
-            hasMention -> {
-                val sender = title.split(" ").firstOrNull()?.take(8) ?: "Msg"
-                "@$sender"
+    // ---------------------------------------------------------------------
+    // Discord
+    //   voice session -> "On VC" / "On call" / "Muted" / "Deafened" / "Connecting"
+    //   anything else -> mention / DM as before
+    // ---------------------------------------------------------------------
+    private fun parseDiscord(notif: Notification, combined: String, title: String, text: String): ParsedCapsule? {
+        val actions = notif.actions?.toList() ?: emptyList()
+        val actionTitles = actions.mapNotNull { it.title?.toString()?.lowercase() }
+
+        val channelId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notif.channelId?.trim().orEmpty()
+        } else {
+            ""
+        }
+        val isVoice = channelId.equals(DISCORD_VOICE_CHANNEL_ID, ignoreCase = true) ||
+                discordVoiceTextPattern.containsMatchIn(combined)
+
+        if (isVoice) {
+            // The action button shows the *next* state, so "Unmute" means currently muted.
+            val isDeafened = actionTitles.any { it.contains("undeafen") } ||
+                    discordDeafenedPattern.containsMatchIn(combined)
+            val isMuted = actionTitles.any { it.contains("unmute") } ||
+                    discordMutedPattern.containsMatchIn(combined)
+            val isConnecting = Regex("""\bconnecting\b|\bwaiting\s+for\b""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(combined)
+            val isCall = Regex("""\bcall\b""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+
+            val pill = when {
+                isDeafened -> "Deafened"
+                isMuted -> "Muted"
+                isConnecting -> "Connecting"
+                isCall -> "On call"
+                else -> "On VC"
             }
-            else -> "DM"
+
+            return ParsedCapsule(
+                pillText = pill,
+                title = title.ifBlank { "Discord" },
+                content = text,
+                iconName = "ic_capsule_chat",
+                timeoutSeconds = 0,
+                actions = actions
+            )
+        }
+
+        val hasMention = combined.contains("@") || combined.contains("mentioned", ignoreCase = true)
+        val pill = if (hasMention) {
+            val sender = title.split(" ").firstOrNull()?.take(8) ?: "Msg"
+            "@$sender"
+        } else {
+            "DM"
         }
 
         return ParsedCapsule(
@@ -237,20 +300,37 @@ object CapsuleParser {
             title = title.ifBlank { "Discord" },
             content = text,
             iconName = "ic_capsule_chat",
-            timeoutSeconds = if (isVoice || isMuted || isDeafened) 0 else 8,
-            actions = notif.actions?.toList() ?: emptyList()
+            timeoutSeconds = 8,
+            actions = actions
         )
     }
 
+    // ---------------------------------------------------------------------
+    // ProtonVPN: "Connected to Japan" -> "Japan" with a VPN icon
+    // ---------------------------------------------------------------------
     private fun parseProtonVpn(notif: Notification, title: String, text: String): ParsedCapsule? {
-        if (!title.contains("Connected", ignoreCase = true)) return null
-        val server = Regex("""(?i)connected to\s+(.+)""").find(title)?.groupValues?.get(1)?.take(10) ?: "VPN"
+        val source = when {
+            title.contains("Connected", ignoreCase = true) -> title
+            text.contains("Connected", ignoreCase = true) -> text
+            else -> return null
+        }
+
+        val rawPlace = protonCountryPattern.find(source)?.groupValues?.get(1).orEmpty()
+        // Drop server suffixes like "Japan - JP#12", "Japan • JP#12", "Japan (P2P)"
+        val place = rawPlace
+            .split(" - ", " – ", " • ", " · ", "#", "(")
+            .firstOrNull()
+            ?.trim()
+            ?.trimEnd('.', ',', ':')
+            ?.take(12)
+            .orEmpty()
+            .ifBlank { "VPN" }
 
         return ParsedCapsule(
-            pillText = server,
+            pillText = place,
             title = title,
             content = text,
-            iconName = "ic_capsule_shield", 
+            iconName = "ic_capsule_vpn",
             timeoutSeconds = 0, 
             actions = notif.actions?.toList() ?: emptyList()
         )
