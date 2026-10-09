@@ -6,12 +6,15 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.microtag.core.MicrotagReminder
 import com.microtag.rules.RuleEngine
+import com.microtag.shizuku.ShizukuClipboardWatcher
 
 class MicrotagNotificationService : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
         RuleEngine.init(applicationContext)
+        // Keep Shizuku clipboard hook running continuously in background
+        ShizukuClipboardWatcher.init(applicationContext)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -40,7 +43,24 @@ class MicrotagNotificationService : NotificationListenerService() {
             return
         }
 
-        // 2. Fall-Through to System Hooks & Ongoing Events
+        // 2. Specialized Multi-App Parser (Strava, Discord, SMS OTP, System Downloads)
+        val parsed = CapsuleParser.parse(sbn)
+        if (parsed != null) {
+            MicrotagReminder.showCapsule(
+                context = applicationContext,
+                pillText = parsed.pillText,
+                title = parsed.title,
+                content = parsed.content,
+                notificationId = sbn.id,
+                timeoutSeconds = parsed.timeoutSeconds,
+                iconName = parsed.iconName,
+                customIcon = null,
+                detailPayload = parsed.payload
+            )
+            return
+        }
+
+        // 3. System Hooks & Ongoing Events Fall-Through
         when (pkg) {
             "ch.protonvpn.android" -> handleProtonVpn(sbn, title, text)
             "com.microsoft.teams" -> handleTeams(sbn, title, text)
@@ -58,7 +78,6 @@ class MicrotagNotificationService : NotificationListenerService() {
         super.onNotificationRemoved(sbn)
         if (sbn == null) return
 
-        // Automatically cancel any active capsule if an ongoing source was cleared
         if (sbn.isOngoing) {
             val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(sbn.id)
