@@ -63,6 +63,8 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".listener.MicrotagLogActivity" android:exported="false" />
+
         <!-- Capsule Action Receiver -->
         <receiver
             android:name=".core.CapsuleDismissReceiver"
