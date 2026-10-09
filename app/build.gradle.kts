@@ -9,14 +9,14 @@ android {
 
     defaultConfig {
         applicationId = "com.microtag"
-        minSdk = 35
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // 1. signingConfigs MUST come BEFORE buildTypes
     signingConfigs {
         getByName("debug") {
             val localKeystore = rootProject.file("keystore/signing.jks")
@@ -27,20 +27,32 @@ android {
                 keyPassword = "android"
             }
         }
+        
+        // Define releaseKey so the reference on line 34 doesn't crash
+        create("releaseKey") {
+            val localKeystore = rootProject.file("keystore/signing.jks")
+            if (localKeystore.exists()) {
+                storeFile = localKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
+    // 2. buildTypes comes AFTER signingConfigs
     buildTypes {
-        debug {
-            signingConfig = signingConfigs.getByName("releaseKey")
-        }
         release {
             isMinifyEnabled = true
-            isShrinkResources = true
-            signingConfig = signingConfigs.getByName("releaseKey")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // This reference will now succeed because releaseKey was created above
+            signingConfig = signingConfigs.getByName("releaseKey") 
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
