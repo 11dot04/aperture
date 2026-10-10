@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
@@ -89,8 +90,8 @@ fun TagDial(
             for (i in 0 until n) {
                 val a = Math.toRadians(angleOf(i) - 90.0)
                 val selected = i == currentIndex
-                val r1 = r * 0.80f
-                val r2 = r * if (selected) 1f else 0.92f
+                val r1 = r * 0.82f
+                val r2 = r * if (selected) 1f else 0.93f
                 drawLine(
                     color = body,
                     start = Offset(c.x + cos(a).toFloat() * r1, c.y + sin(a).toFloat() * r1),
@@ -99,22 +100,20 @@ fun TagDial(
                     cap = StrokeCap.Round
                 )
             }
-            drawCircle(body, radius = r * 0.66f, center = c)
+            drawCircle(body, radius = r * 0.70f, center = c)
             val a = Math.toRadians(sweep - 90.0)
             drawCircle(
                 color = face,
-                radius = r * 0.085f,
-                center = Offset(c.x + cos(a).toFloat() * r * 0.52f, c.y + sin(a).toFloat() * r * 0.52f)
+                radius = r * 0.08f,
+                center = Offset(c.x + cos(a).toFloat() * r * 0.57f, c.y + sin(a).toFloat() * r * 0.57f)
             )
         }
-        Text(
-            text = steps[index],
-            style = TextStyle(
-                fontFamily = Montserrat,
-                fontWeight = FontWeight.Black,
-                fontSize = 22.sp,
-                color = face
-            )
+        // Sized from the dial itself, so it can never spill past the knob.
+        FitText(
+            text = AnnotatedString(steps[index]),
+            style = TextStyle(fontFamily = Montserrat, fontWeight = FontWeight.Black, fontSize = 40.sp, color = face),
+            modifier = Modifier.fillMaxSize(0.5f),
+            contentAlignment = Alignment.Center
         )
     }
 }
