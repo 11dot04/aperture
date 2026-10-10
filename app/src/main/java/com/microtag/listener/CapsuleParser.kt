@@ -26,10 +26,15 @@ object CapsuleParser {
         """\bvoice\s+(?:connected|connection|channel)\b|\bin\s+call\b|\bon\s+call\b|\bconnecting\b|\bwaiting\s+for\s+voice\b""",
         RegexOption.IGNORE_CASE
     )
+    private val discordConnectingPattern = Regex(
+        """\b(?:connecting|reconnecting|authenticating|waiting|rtc|ice)\b""",
+        RegexOption.IGNORE_CASE
+    )
     private val discordMutedPattern = Regex("""\bmuted\b""", RegexOption.IGNORE_CASE)
     private val discordDeafenedPattern = Regex("""\bdeafened\b""", RegexOption.IGNORE_CASE)
 
-    private val stravaPausedPattern = Regex("""paused|暫停|暂停""", RegexOption.IGNORE_CASE)
+    // Strava's "Stop" button pauses the recording and its notification then says "Stopped".
+    private val stravaPausedPattern = Regex("""paused|stopped|暫停|暂停""", RegexOption.IGNORE_CASE)
     private val stravaDistancePattern = Regex("""\b\d+(?:[.,]\d+)?\s?(?:km|mi)\b""", RegexOption.IGNORE_CASE)
     private val stravaTimePattern = Regex("""\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b""")
 
@@ -113,6 +118,11 @@ object CapsuleParser {
     }
 
     private fun parseAmbientMusic(notif: Notification, title: String, text: String): ParsedCapsule? {
+        // Ignore the app's permanent foreground-service notification; it isn't a song.
+        if (title.contains("Ambient Music Mod", ignoreCase = true) ||
+            text.contains("running in the background", ignoreCase = true)
+        ) return null
+
         val rawSong = title.replace("Now Playing", "", ignoreCase = true).trim().ifBlank { 
             text.split("-").firstOrNull()?.trim() ?: "Music" 
         }
@@ -260,20 +270,22 @@ object CapsuleParser {
                 discordVoiceTextPattern.containsMatchIn(combined)
 
         if (isVoice) {
-            // The action button shows the *next* state, so "Unmute" means currently muted.
+            // Discord titles look like "Voice Connected – Tap to return to call".
+            // Only the part before the dash is the state; the rest is boilerplate
+            // (it contains "call", which is why everything used to read "On call").
+            val status = title.substringBefore(" – ").substringBefore(" - ").trim()
+            val isConnecting = discordConnectingPattern.containsMatchIn(status)
+
+            // The action buttons show the *next* state, so "Unmute" means currently muted.
             val isDeafened = actionTitles.any { it.contains("undeafen") } ||
-                    discordDeafenedPattern.containsMatchIn(combined)
+                    discordDeafenedPattern.containsMatchIn(status)
             val isMuted = actionTitles.any { it.contains("unmute") } ||
-                    discordMutedPattern.containsMatchIn(combined)
-            val isConnecting = Regex("""\bconnecting\b|\bwaiting\s+for\b""", RegexOption.IGNORE_CASE)
-                .containsMatchIn(combined)
-            val isCall = Regex("""\bcall\b""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+                    discordMutedPattern.containsMatchIn(status)
 
             val pill = when {
+                isConnecting -> "Connecting"
                 isDeafened -> "Deafened"
                 isMuted -> "Muted"
-                isConnecting -> "Connecting"
-                isCall -> "On call"
                 else -> "On VC"
             }
 
@@ -322,8 +334,8 @@ object CapsuleParser {
             .firstOrNull()
             ?.trim()
             ?.trimEnd('.', ',', ':')
-            ?.take(12)
             .orEmpty()
+            .let { CountryCodes.shorten(it) }
             .ifBlank { "VPN" }
 
         return ParsedCapsule(
