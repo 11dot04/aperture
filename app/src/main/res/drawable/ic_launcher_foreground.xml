@@ -1,10 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="162dp" android:height="60dp"
-    android:viewportWidth="162" android:viewportHeight="60">
-    <!-- T -->
-    <path android:strokeColor="#FFCCFF00" android:strokeWidth="13" android:pathData="M0,6.5h44 M22,6.5V60"/>
-    <!-- A drawn as a bare lambda, matching the mock -->
-    <path android:strokeColor="#FFCCFF00" android:strokeWidth="13" android:strokeLineJoin="miter" android:strokeMiterLimit="10" android:pathData="M51,60L72,6L93,60"/>
-    <!-- G -->
-    <path android:strokeColor="#FFCCFF00" android:strokeWidth="12" android:pathData="M147.7,16.2A24,24 0 1,0 152,30H131"/>
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 
+        TAG Logo Vector
+        - T: Precise top bar and stem.
+        - A: Geometric lambda (Λ) curve.
+        - G: Circular arc with inward cut.
+        
+        Fill is set to source neon green. 
+        Material You will auto-tint this layer when monochrome is enabled.
+    -->
+    <path
+        android:fillColor="@color/color-surface"
+        android:pathData="
+            M 15,40 h 20 v 6 h -7 v 22 h -6 v -22 h -7 z
+            
+            M 48,40 h 6 l 9,28 h -6.5 l -5.5,-17 l -5.5,17 h -6.5 z
+            
+            M 88.9,44.1 
+            A 14,14 0 1,0 79,68 
+            H 93 V 51 H 79 V 57 H 85 
+            A 8,8 0 1,1 84.6,48.4 Z" />
+
 </vector>
