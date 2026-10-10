@@ -46,6 +46,7 @@ class MicrotagNotificationService : NotificationListenerService() {
         prefs = MicrotagPrefs(applicationContext)
         MicrotagLog.init(applicationContext)
         RuleEngine.init(applicationContext)
+        CountryCodes.init(applicationContext)
         if (prefs.isAppEnabled(MicrotagPrefs.KEY_CLIPBOARD)) {
             ShizukuClipboardWatcher.init(applicationContext)
         }
@@ -54,7 +55,6 @@ class MicrotagNotificationService : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         Log.i(TAG, "Listener connected")
-        logBuildInfo()
         handler.removeCallbacks(pollTask)
         handler.post(pollTask)
     }
@@ -345,30 +345,6 @@ class MicrotagNotificationService : NotificationListenerService() {
             title = if (quiet) "" else title,
             text = if (quiet) "" else if (sub.isNotBlank()) "$text | sub: $sub" else text,
             meta = metaOf(sbn)
-        )
-    }
-
-    // Proves which build is running and whether the app was truly reinstalled:
-    // if "firstInstall" stays old after an uninstall, the data/package was never removed.
-    private fun logBuildInfo() {
-        val info = runCatching { packageManager.getPackageInfo(packageName, 0) }.getOrNull()
-        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-        val meta = if (info != null) {
-            "version=${info.versionName} code=${info.longVersionCode} " +
-                    "firstInstall=${fmt.format(java.util.Date(info.firstInstallTime))} " +
-                    "lastUpdate=${fmt.format(java.util.Date(info.lastUpdateTime))} " +
-                    "parser=r4 pillAsTitle=true"
-        } else {
-            "package info unavailable"
-        }
-        MicrotagLog.add(
-            key = "service",
-            pkg = packageName,
-            path = "SYSTEM",
-            decision = Decision.INFO,
-            reason = "listener connected",
-            title = "build info",
-            meta = meta
         )
     }
 
