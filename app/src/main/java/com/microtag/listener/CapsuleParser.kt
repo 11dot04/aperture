@@ -381,7 +381,7 @@ object CapsuleParser {
             pillText = "$pct%",
             title = title.ifBlank { "In Progress" },
             content = text.ifBlank { "$progress / $max completed" },
-            iconName = "ic_capsule_bolt",
+            iconName = "ic_download",
             timeoutSeconds = 4
         )
     }
