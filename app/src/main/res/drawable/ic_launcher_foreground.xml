@@ -15,7 +15,7 @@
         Material You will auto-tint this layer when monochrome is enabled.
     -->
     <path
-        android:fillColor="@color/color-surface"
+        android:fillColor="@color/icon_on_surface"
         android:pathData="
             M 15,40 h 20 v 6 h -7 v 22 h -6 v -22 h -7 z
             
