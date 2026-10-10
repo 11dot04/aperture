@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.microtag.R
 import com.microtag.core.MicrotagPrefs
 import com.microtag.core.MicrotagReminder
+import com.microtag.listener.MicrotagLogActivity
 
 // ==========================================================
 // STATE
