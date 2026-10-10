@@ -4,6 +4,16 @@ import android.Manifest
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,6 +55,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -54,7 +65,6 @@ import androidx.compose.ui.unit.sp
 import com.microtag.R
 import com.microtag.core.MicrotagPrefs
 import com.microtag.core.MicrotagReminder
-import com.microtag.listener.MicrotagLogActivity
 
 // ==========================================================
 // STATE
@@ -153,11 +163,18 @@ fun DashboardScreen(prefs: MicrotagPrefs, onOpenSetup: () -> Unit) {
         )
         Spacer(Modifier.height(36.dp))
 
-        // Rows that sit below the weather block shift down by one when it opens.
-        val r = if (weatherOpen) 1 else 0
-        val b = 4 + r       // first Micro Tags row
-        val b2 = b + 3      // earbuds / sound mode
-        val b3 = b2 + 2     // music / VPN
+        // p glides 0 -> 1 as Weather opens. Everything below it follows the same number,
+        // so the whole column moves as one piece instead of snapping.
+        val p by animateFloatAsState(
+            targetValue = if (weatherOpen) 1f else 0f,
+            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+            label = "weatherOpen"
+        )
+        // Streaks drops a row first, then stretches sideways once it is clear of Strava.
+        val widen = ((p - 0.85f) / 0.15f).coerceIn(0f, 1f)
+        val b = 4f + p       // first Micro Tags row
+        val b2 = b + 3f      // earbuds / sound mode
+        val b3 = b2 + 2f     // music / VPN
 
         TagGrid {
             // ---- rows 0-1: Discord + Inspect
@@ -168,46 +185,34 @@ fun DashboardScreen(prefs: MicrotagPrefs, onOpenSetup: () -> Unit) {
             InspectTile(Modifier.cell(2, 1), R.drawable.ic_inspect_convert)
             InspectTile(Modifier.cell(3, 1), R.drawable.ic_inspect_define)
 
-            // ---- streaks / weather / strava
-            if (weatherOpen) {
-                WeatherOpenTile(
-                    Modifier.cell(0, 2, 2, 2), weather, weatherIdx, intervalLabels,
-                    onIndex = { weatherIdx = it; settings.weatherIntervalMin = WeatherSteps[it] },
-                    onClose = { weatherOpen = false }
-                )
-                StravaTile(
-                    Modifier.cell(2, 2, 2, 2), strava, stravaOpen, { stravaOpen = !stravaOpen },
-                    stravaMetric, { stravaMetric = it; settings.stravaMetric = it }
-                )
-                PillTile(
-                    Modifier.cell(0, 4, 4, 1), R.drawable.ic_streak, "Streaks", null, streaks,
-                    chevron = true, onChevron = { sheet = DashSheet.Streaks }
-                )
-            } else {
-                PillTile(
-                    Modifier.cell(0, 2, 2, 1), R.drawable.ic_streak, "Streaks", null, streaks,
-                    chevron = true, onChevron = { sheet = DashSheet.Streaks }
-                )
-                PillTile(
-                    Modifier.cell(0, 3, 2, 1), R.drawable.ic_weather, "Weather", null, weather,
-                    chevron = true, onChevron = { weatherOpen = true }
-                )
-                StravaTile(
-                    Modifier.cell(2, 2, 2, 2), strava, stravaOpen, { stravaOpen = !stravaOpen },
-                    stravaMetric, { stravaMetric = it; settings.stravaMetric = it }
-                )
-            }
+            // ---- weather (top) / streaks (under it) / strava
+            WeatherTile(
+                Modifier.cell(0f, 2f, 2f, 1f + p),
+                // Pill when closed, settles to the standard tile radius as it opens.
+                RoundedCornerShape((100f + (26f - 100f) * p.coerceIn(0f, 1f)).dp),
+                weather, weatherOpen, weatherIdx, intervalLabels,
+                onIndex = { weatherIdx = it; settings.weatherIntervalMin = WeatherSteps[it] },
+                onOpenChange = { weatherOpen = it }
+            )
+            PillTile(
+                Modifier.cell(0f, 3f + p, 2f + 2f * widen, 1f), null, "Streaks", null, streaks,
+                chevron = true, onChevron = { sheet = DashSheet.Streaks }
+            )
+            StravaTile(
+                Modifier.cell(2, 2, 2, 2), strava, stravaOpen, { stravaOpen = !stravaOpen },
+                stravaMetric, { stravaMetric = it; settings.stravaMetric = it }
+            )
 
             // ---- Micro Tags: small, single-purpose chips
-            TagFrame("Micro Tags", TagColors.Outline, Modifier.cell(0, b, 4, 3, outset = 6.dp), labelBias = 0.55f)
-            MicroTile(Modifier.cell(0, b, 2, 1), R.drawable.ic_upi_rupee, "UPI", "Credit", upi)
-            IconTile(Modifier.cell(2, b), R.drawable.ic_download, download)
-            IconTile(Modifier.cell(3, b), R.drawable.ic_upload, upload)
-            MicroTile(Modifier.cell(0, b + 1, 2, 1), R.drawable.ic_otp, "OTP", "2FA", otp)
-            MicroTile(Modifier.cell(2, b + 1, 2, 1), R.drawable.ic_print, "Print", "in Progress", print, inline = true)
-            MicroTile(Modifier.cell(0, b + 2, 2, 1), R.drawable.ic_clipboard, "Clipboard", "Context", clipboard, size = 16.sp)
+            TagFrame("Micro Tags", TagColors.Outline, Modifier.cell(0f, b, 4f, 3f, outset = 6.dp), labelBias = 0.55f)
+            MicroTile(Modifier.cell(0f, b, 2f, 1f), R.drawable.ic_upi_rupee, "UPI", "Credit", upi)
+            IconTile(Modifier.cell(2f, b), R.drawable.ic_download, download)
+            IconTile(Modifier.cell(3f, b), R.drawable.ic_upload, upload)
+            MicroTile(Modifier.cell(0f, b + 1f, 2f, 1f), R.drawable.ic_otp, "OTP", "2FA", otp)
+            MicroTile(Modifier.cell(2f, b + 1f, 2f, 1f), R.drawable.ic_print, "Print", "in\nProgress", print, inline = true)
+            MicroTile(Modifier.cell(0f, b + 2f, 2f, 1f), R.drawable.ic_clipboard, "Clipboard", "Context", clipboard, size = 16.sp)
             PillTile(
-                Modifier.cell(2, b + 2, 2, 1), R.drawable.ic_calendar_countdown, "Events", "countdown", calendar,
+                Modifier.cell(2f, b + 2f, 2f, 1f), R.drawable.ic_calendar_countdown, "Events", "countdown", calendar,
                 shape = TagShapes.Rect, size = 14.sp, chevron = true,
                 onToggle = {
                     if (!calendar.on && !hasCalendarPermission(context)) {
@@ -218,36 +223,18 @@ fun DashboardScreen(prefs: MicrotagPrefs, onOpenSetup: () -> Unit) {
             )
 
             // ---- earbuds + sound mode
-            TagTile(Modifier.cell(0, b2, 2, 2), TagShapes.Circle, bluetooth.state, bluetooth::toggle) { fg ->
+            TagTile(Modifier.cell(0f, b2, 2f, 2f), TagShapes.Circle, bluetooth.state, bluetooth::toggle) { fg ->
                 TagIcon(R.drawable.ic_earbuds, fg, Modifier.align(Alignment.Center), 84.dp)
             }
-            PillTile(Modifier.cell(2, b2, 2, 1), R.drawable.ic_sound, "Sound", "Mode", sound)
+            PillTile(Modifier.cell(2f, b2, 2f, 1f), R.drawable.ic_sound, "Sound", "Mode", sound)
             RingerSelector(
-                Modifier.cell(2, b2 + 1, 2, 1), enabled = sound.on, modes = ringerModes,
+                Modifier.cell(2f, b2 + 1f, 2f, 1f), enabled = sound.on, modes = ringerModes,
                 onChange = { ringerModes = it; settings.ringerModes = it }
             )
 
-            // ---- music + VPN
-            TagTile(Modifier.cell(0, b3, 2, 1), TagShapes.CapRight, songNext.state, songNext::toggle) { fg ->
-                Row(
-                    Modifier.fillMaxSize().padding(start = 22.dp, end = 26.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TagLabel("Song", "Up Next", fg, Modifier.weight(1f))
-                    TagIcon(R.drawable.ic_song_next, fg, size = 30.dp)
-                }
-            }
-            TagTile(Modifier.cell(0, b3 + 1, 2, 1), TagShapes.CapLeft, ambient.state, ambient::toggle) { fg ->
-                Row(
-                    Modifier.fillMaxSize().padding(start = 26.dp, end = 18.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TagIcon(R.drawable.ic_ambient_music, fg, size = 30.dp)
-                    Spacer(Modifier.width(14.dp))
-                    TagLabel("Ambient", "Music Mod", fg, Modifier.weight(1f), size = 16.sp)
-                }
-            }
-            BigTile(Modifier.cell(2, b3, 2, 2), R.drawable.ic_vpn, "ProtonVPN", "SESSIONS", proton)
+            // ---- music pair (one interlocked shape) + VPN
+            MusicPair(Modifier.cell(0f, b3, 2f, 2f), songNext, ambient)
+            BigTile(Modifier.cell(2f, b3, 2f, 2f), R.drawable.ic_vpn, "ProtonVPN", "SESSIONS", proton)
         }
         Spacer(Modifier.height(40.dp))
     }
@@ -293,7 +280,7 @@ private fun Hero(count: Int, onSimulate: () -> Unit, onLogs: () -> Unit) {
         color = color
     )
     Column(Modifier.fillMaxWidth()) {
-        Text(count.toString(), style = style(FontWeight.Black, TagColors.White), maxLines = 1)
+        RollingNumber(count, style(FontWeight.Black, TagColors.White))
         Text(
             "INTERCEPTIONS",
             style = style(FontWeight.Black, TagColors.White),
@@ -306,7 +293,7 @@ private fun Hero(count: Int, onSimulate: () -> Unit, onLogs: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.End,
             maxLines = 1,
-            style = style(FontWeight.Light, TagColors.Outline).copy(drawStyle = Stroke(width = 2f))
+            style = style(FontWeight.Black, TagColors.Outline).copy(drawStyle = Stroke(width = 3f))
         )
         Spacer(Modifier.height(24.dp))
         Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -350,8 +337,14 @@ private fun BigTile(modifier: Modifier, icon: Int, title: String, sub: String, t
 @Composable
 private fun BigLabel(title: String, sub: String, fg: Color, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.End) {
-        Text(title, style = TextStyle(fontFamily = Montserrat, fontWeight = FontWeight.Bold, fontSize = 21.sp, color = fg))
-        Text(sub, style = TextStyle(fontFamily = Montserrat, fontWeight = FontWeight.Light, fontSize = 14.sp, letterSpacing = 0.3.sp, color = fg))
+        FitText(
+            AnnotatedString(title),
+            TextStyle(fontFamily = Montserrat, fontWeight = FontWeight.Bold, fontSize = 21.sp, color = fg)
+        )
+        FitText(
+            AnnotatedString(sub),
+            TextStyle(fontFamily = Montserrat, fontWeight = FontWeight.Light, fontSize = 14.sp, letterSpacing = 0.3.sp, color = fg)
+        )
     }
 }
 
@@ -378,51 +371,69 @@ private fun IconTile(modifier: Modifier, icon: Int, t: PrefToggle) {
 
 @Composable
 private fun InspectTile(modifier: Modifier, icon: Int) {
-    TagTile(modifier, RoundedCornerShape(24.dp), TileState.Static) { fg ->
+    TagTile(modifier, TagShapes.Rect, TileState.Static) { fg ->
         TagIcon(icon, fg, Modifier.align(Alignment.Center), 34.dp)
     }
 }
 
-/** Icon left, label, optional chevron. Tapping the body toggles; tapping the chevron opens options. */
+/** Optional icon, label, optional chevron. Tapping the body toggles; tapping the chevron opens options. */
 @Composable
 private fun PillTile(
-    modifier: Modifier, icon: Int, bold: String, light: String?, t: PrefToggle,
+    modifier: Modifier, icon: Int?, bold: String, light: String?, t: PrefToggle,
     shape: androidx.compose.ui.graphics.Shape = TagShapes.Pill,
     size: TextUnit = 17.sp,
     chevron: Boolean = false,
-    open: Boolean = false,
     onToggle: () -> Unit = t::toggle,
     onChevron: () -> Unit = {}
 ) {
     TagTile(modifier, shape, t.state, onToggle) { fg ->
         Row(
-            Modifier.fillMaxSize().padding(start = if (chevron && light != null) 16.dp else 22.dp, end = if (chevron) 6.dp else 22.dp),
+            Modifier.fillMaxSize().padding(start = if (icon == null) 26.dp else 18.dp, end = if (chevron) 8.dp else 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TagIcon(icon, fg, size = if (light != null && chevron) 22.dp else 26.dp)
-            Spacer(Modifier.width(if (light != null && chevron) 8.dp else 12.dp))
+            if (icon != null) {
+                TagIcon(icon, fg, size = 22.dp)
+                Spacer(Modifier.width(8.dp))
+            }
             TagLabel(bold, light, fg, Modifier.weight(1f), size)
-            if (chevron) ChevronButton(open, fg, onClick = onChevron)
+            if (chevron) ChevronButton(false, fg, onClick = onChevron)
         }
     }
 }
 
+/** One tile for both states. Its bounds glide; only the content swaps. */
 @Composable
-private fun WeatherOpenTile(
-    modifier: Modifier, t: PrefToggle, index: Int, labels: List<String>,
-    onIndex: (Int) -> Unit, onClose: () -> Unit
+private fun WeatherTile(
+    modifier: Modifier, shape: androidx.compose.ui.graphics.Shape, t: PrefToggle, open: Boolean, index: Int, labels: List<String>,
+    onIndex: (Int) -> Unit, onOpenChange: (Boolean) -> Unit
 ) {
-    TagTile(modifier, TagShapes.Big, t.state, t::toggle) { fg ->
+    TagTile(modifier, shape, t.state, t::toggle) { fg ->
         val face = if (t.on) TagColors.Lime else TagColors.Black
-        Column(Modifier.fillMaxSize().padding(start = 18.dp, top = 6.dp, bottom = 14.dp, end = 6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TagIcon(R.drawable.ic_weather, fg, size = 24.dp)
-                Spacer(Modifier.width(10.dp))
-                TagLabel("Weather", "every ${labels[index]}", fg, Modifier.weight(1f), 15.sp)
-                ChevronButton(open = true, tint = fg, onClick = onClose)
-            }
-            Box(Modifier.weight(1f).fillMaxWidth().padding(end = 12.dp), contentAlignment = Alignment.Center) {
-                TagDial(labels, index, onIndex, body = fg, face = face, modifier = Modifier.fillMaxHeight().aspectRatio(1f))
+        AnimatedContent(
+            targetState = open,
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = { fadeIn(tween(200, delayMillis = 80)) togetherWith fadeOut(tween(80)) },
+            label = "weatherContent"
+        ) { isOpen ->
+            if (!isOpen) {
+                Row(
+                    Modifier.fillMaxSize().padding(start = 26.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TagLabel("Weather", null, fg, Modifier.weight(1f))
+                    ChevronButton(false, fg) { onOpenChange(true) }
+                }
+            } else {
+                Column(Modifier.fillMaxSize().padding(start = 18.dp, top = 2.dp, bottom = 12.dp, end = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TagLabel("Weather", null, fg, Modifier.weight(1f), 15.sp)
+                        ChevronButton(true, fg) { onOpenChange(false) }
+                    }
+                    // The dial is the content: as large as the tile allows.
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        TagDial(labels, index, onIndex, body = fg, face = face, modifier = Modifier.fillMaxHeight().aspectRatio(1f))
+                    }
+                }
             }
         }
     }
@@ -439,36 +450,61 @@ private fun StravaTile(
             TagIcon(R.drawable.ic_strava, fg, Modifier.align(Alignment.TopStart).padding(20.dp), 30.dp)
             BigLabel("Strava", "WORKOUTS", fg, Modifier.align(Alignment.BottomEnd).padding(20.dp))
         } else {
-            Column(
-                Modifier.align(Alignment.TopStart).padding(start = 18.dp, top = 52.dp, end = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                listOf("pace" to "Pace", "time" to "Time", "distance" to "Distance").forEach { (key, label) ->
-                    val selected = key == metric
+            // Heading and chevron share one row, and the chips split whatever height is left,
+            // so nothing can overlap or run off the tile at any screen size.
+            Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 14.dp, bottom = 14.dp)) {
+                Box(Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.CenterStart) {
+                    TagLabel("Chip", "shows", fg, Modifier.padding(end = 40.dp), 14.sp, inline = true)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     val view = LocalView.current
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(32.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) fg else Color.Transparent)
-                            .border(2.dp, fg, CircleShape)
-                            .clickable { view.tick(Tick.Press); onMetric(key) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            label,
-                            style = TextStyle(
-                                fontFamily = Montserrat, fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp, color = if (selected) face else fg
+                    listOf("pace" to "Pace", "time" to "Time", "distance" to "Distance").forEach { (key, label) ->
+                        val selected = key == metric
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .clip(CircleShape)
+                                .background(if (selected) fg else Color.Transparent)
+                                .border(2.dp, fg, CircleShape)
+                                .clickable { view.tick(Tick.Press); onMetric(key) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            FitText(
+                                AnnotatedString(label),
+                                TextStyle(
+                                    fontFamily = Montserrat, fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp, color = if (selected) face else fg
+                                ),
+                                Modifier.padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.Center
                             )
-                        )
+                        }
                     }
                 }
             }
-            TagLabel("Strava", "chip shows", fg, Modifier.align(Alignment.TopStart).padding(start = 18.dp, top = 12.dp), 14.sp, inline = true)
         }
-        ChevronButton(open, fg, Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp), onClick = onOpen)
+        ChevronButton(open, fg, Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 4.dp), onClick = onOpen)
+    }
+}
+
+/** Song Up Next and Ambient Music Mod: two tiles that meet with no gap and read as one shape. */
+@Composable
+private fun MusicPair(modifier: Modifier, song: PrefToggle, ambient: PrefToggle) {
+    Column(modifier) {
+        TagTile(Modifier.weight(1f).fillMaxWidth(), TagShapes.CapRight, song.state, song::toggle) { fg ->
+            Row(Modifier.fillMaxSize().padding(start = 22.dp, end = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                TagLabel("Song", "Up Next", fg, Modifier.weight(1f))
+                TagIcon(R.drawable.ic_song_next, fg, size = 28.dp)
+            }
+        }
+        TagTile(Modifier.weight(1f).fillMaxWidth(), TagShapes.CapLeft, ambient.state, ambient::toggle) { fg ->
+            Row(Modifier.fillMaxSize().padding(start = 24.dp, end = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                TagIcon(R.drawable.ic_ambient_music, fg, size = 28.dp)
+                Spacer(Modifier.width(12.dp))
+                TagLabel("Ambient", "Music Mod", fg, Modifier.weight(1f), size = 16.sp)
+            }
+        }
     }
 }
 
@@ -500,6 +536,27 @@ private fun RingerSelector(modifier: Modifier, enabled: Boolean, modes: Set<Stri
                     if (on) TagIcon(icon, TagColors.Lime, size = 30.dp)
                     else Box(Modifier.size(10.dp).clip(CircleShape).background(fg))
                 }
+            }
+        }
+    }
+}
+
+/** Digits roll upward like an odometer when the number changes. */
+@Composable
+private fun RollingNumber(value: Int, style: TextStyle) {
+    val text = value.toString()
+    Row {
+        text.forEachIndexed { i, ch ->
+            // Keyed by place from the right, so a new leading digit doesn't re-roll the rest.
+            androidx.compose.runtime.key(text.length - i) {
+                AnimatedContent(
+                    targetState = ch,
+                    transitionSpec = {
+                        (slideInVertically(spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(tween(120))) togetherWith
+                            (slideOutVertically(tween(180)) { -it } + fadeOut(tween(120)))
+                    },
+                    label = "digit"
+                ) { c -> Text(c.toString(), style = style, maxLines = 1) }
             }
         }
     }
