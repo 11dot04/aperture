@@ -20,9 +20,10 @@ object MicrotagReminder {
     private const val TAG = "MicrotagReminder"
     private const val CHANNEL_ID = "microtag_live_capsules_v3"
     private const val CHANNEL_NAME = "Live Status Capsules"
-    
-    // Android 16 (API 36) Promoted Ongoing Extra Key
+
+    // Android 16 (API 36) Live Update extras
     private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
+    private const val EXTRA_SHORT_CRITICAL_TEXT = "android.shortCriticalText"
 
     // Engine to manage per-minute chip updates for calendar/events without IPC spam
     private val handler = Handler(Looper.getMainLooper())
@@ -187,17 +188,49 @@ object MicrotagReminder {
         }
 
         // 4. Attach Live Status Promotion
-        try {
-            val setShortCriticalTextMethod = Notification.Builder::class.java.getMethod("setShortCriticalText", CharSequence::class.java)
-            setShortCriticalTextMethod.invoke(builder, currentPillText)
-        } catch (e: Exception) {
-            Log.w(TAG, "setShortCriticalText not available: ${e.message}")
-        }
-        
-        builder.extras.putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true)
+        applyShortCriticalText(builder, currentPillText)
+        applyPromotedOngoing(builder)
         builder.extras.putString("oplus.liveNotificationType", "capsule")
 
         manager.notify(notificationId, builder.build())
+    }
+
+    /**
+     * Sets the status-bar pill text. The platform setter takes a String (not a CharSequence), so the
+     * old reflection lookup with CharSequence.class failed silently and the system fell back to the
+     * notification title. The extra is written directly as well, so the pill text is set even if the
+     * setter can't be found.
+     */
+    private fun applyShortCriticalText(builder: Notification.Builder, text: String) {
+        builder.extras.putString(EXTRA_SHORT_CRITICAL_TEXT, text)
+
+        val applied = listOf<Class<*>>(String::class.java, CharSequence::class.java).any { type ->
+            try {
+                Notification.Builder::class.java
+                    .getMethod("setShortCriticalText", type)
+                    .invoke(builder, text)
+                true
+            } catch (_: NoSuchMethodException) {
+                false
+            } catch (e: Exception) {
+                Log.w(TAG, "setShortCriticalText(${type.simpleName}) failed: ${e.message}")
+                false
+            }
+        }
+        Log.d(TAG, "pill='$text' via ${if (applied) "setter+extra" else "extra only"}")
+    }
+
+    private fun applyPromotedOngoing(builder: Notification.Builder) {
+        builder.extras.putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true)
+        try {
+            Notification.Builder::class.java
+                .getMethod("setRequestPromotedOngoing", Boolean::class.javaPrimitiveType)
+                .invoke(builder, true)
+        } catch (_: NoSuchMethodException) {
+            // Extra above is enough
+        } catch (e: Exception) {
+            Log.w(TAG, "setRequestPromotedOngoing failed: ${e.message}")
+        }
     }
 
     private fun resolveDrawable(context: Context, name: String?): Int {
