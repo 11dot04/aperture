@@ -1,26 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-
-    <!-- Industrial Bracket Outer Frame -->
-    <path
-        android:fillColor="@color/icon_on_surface"
-        android:pathData="M34,34 L48,34 L48,38 L38,38 L38,48 L34,48 Z" />
-    <path
-        android:fillColor="@color/icon_on_surface"
-        android:pathData="M74,34 L60,34 L60,38 L70,38 L70,48 L74,48 Z" />
-    <path
-        android:fillColor="@color/icon_on_surface"
-        android:pathData="M34,74 L48,74 L48,70 L38,70 L38,60 L34,60 Z" />
-    <path
-        android:fillColor="@color/icon_on_surface"
-        android:pathData="M74,74 L60,74 L60,70 L70,70 L70,60 L74,60 Z" />
-
-    <!-- Center Active Status Pill -->
-    <path
-        android:fillColor="@color/icon_on_surface"
-        android:pathData="M48,51 C48,49.34 49.34,48 51,48 L57,48 C58.66,48 60,49.34 60,51 L60,57 C60,58.66 58.66,60 57,60 L51,60 C49.34,60 48,58.66 48,57 Z" />
+    android:width="162dp" android:height="60dp"
+    android:viewportWidth="162" android:viewportHeight="60">
+    <!-- T -->
+    <path android:strokeColor="#FFCCFF00" android:strokeWidth="13" android:pathData="M0,6.5h44 M22,6.5V60"/>
+    <!-- A drawn as a bare lambda, matching the mock -->
+    <path android:strokeColor="#FFCCFF00" android:strokeWidth="13" android:strokeLineJoin="miter" android:strokeMiterLimit="10" android:pathData="M51,60L72,6L93,60"/>
+    <!-- G -->
+    <path android:strokeColor="#FFCCFF00" android:strokeWidth="12" android:pathData="M147.7,16.2A24,24 0 1,0 152,30H131"/>
 </vector>
