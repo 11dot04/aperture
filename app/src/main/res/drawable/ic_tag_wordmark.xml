@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="162dp" android:height="60dp"
+    android:viewportWidth="162" android:viewportHeight="60">
+    <!-- T -->
+    <path android:fillColor="#FFCCFF00" android:pathData="M0,0h44v13H28.5V60H15.5V13H0z"/>
+    <!-- A as a bare lambda, matching the mock -->
+    <path android:fillColor="#FFCCFF00" android:pathData="M50,60L67,0H77L94,60H80L72,31.7L64,60z"/>
+    <!-- G -->
+    <path android:strokeColor="#FFCCFF00" android:strokeWidth="12" android:strokeLineCap="butt"
+        android:pathData="M147.7,16.2A24,24 0 1,0 152,30H131"/>
+</vector>
