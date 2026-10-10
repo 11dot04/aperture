@@ -7,11 +7,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.EaseInOutSine
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -28,6 +23,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -92,48 +95,72 @@ fun OnboardingScreen(onFinish: () -> Unit) {
         }
     }
 
-    val bounce by rememberInfiniteTransition(label = "arrow").animateFloat(
-        initialValue = 0f,
-        targetValue = -8f,
-        animationSpec = infiniteRepeatable(tween(900, easing = EaseInOutSine), RepeatMode.Reverse),
-        label = "arrowBounce"
-    )
+    // Where the camera actually is. The system reports the cutout rectangle(s); fall back to
+    // top-centre, which is where almost every phone puts it.
+    val density = LocalDensity.current
+    val screenW = LocalConfiguration.current.screenWidthDp.dp
+    var cutout by remember { mutableStateOf<android.graphics.Rect?>(null) }
+    val cx: Dp = cutout?.let { with(density) { it.exactCenterX().toDp() } } ?: (screenW / 2)
+    val cy: Dp = cutout?.let { with(density) { it.exactCenterY().toDp() } } ?: 26.dp
+    // A cutout on the right half means the arrow comes in from the left instead.
+    val mirrored = cx > screenW / 2 + 40.dp
 
-    Column(
+    // The arrow drawable is 360x207dp with its tip at (199.3, 51.7). Park the tip just
+    // below and to the side of the camera.
+    val arrowW = 360.dp
+    val arrowH = 207.dp
+    val tipX = 199.3.dp
+    val tipY = 51.7.dp
+    val gapX = 22.dp
+    val gapY = 30.dp
+    val arrowLeft = if (!mirrored) cx + gapX - tipX else cx - gapX - (arrowW - tipX)
+    val arrowTop = cy + gapY - tipY
+    val contentTop = arrowTop + arrowH + 12.dp
+
+    Box(
         Modifier
             .fillMaxSize()
             .background(TagColors.Lime)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 34.dp)
+            .onGloballyPositioned {
+                cutout = view.rootWindowInsets?.displayCutout?.boundingRects?.firstOrNull { r -> r.top <= 0 }
+            }
     ) {
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Image(
-                painter = painterResource(R.drawable.ic_onboarding_arrow),
-                contentDescription = null,
-                modifier = Modifier.fillMaxWidth().offset(y = bounce.dp),
-                contentScale = ContentScale.FillWidth
-            )
-            Spacer(Modifier.height(20.dp))
-            Text(
-                "I’ll live here",
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.End,
-                style = TextStyle(
-                    fontFamily = Montserrat, fontWeight = FontWeight.Black,
-                    fontSize = 52.sp, letterSpacing = (-1.5).sp, color = TagColors.Black
+        Image(
+            painter = painterResource(R.drawable.ic_onboarding_arrow),
+            contentDescription = null,
+            modifier = Modifier
+                .size(arrowW, arrowH)
+                .offset { IntOffset(arrowLeft.roundToPx(), arrowTop.roundToPx()) }
+                .graphicsLayer { scaleX = if (mirrored) -1f else 1f }
+        )
+
+        Column(
+            Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(horizontal = 34.dp)
+        ) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                Spacer(Modifier.height(contentTop))
+                FitText(
+                    text = AnnotatedString("I’ll live here"),
+                    style = TextStyle(
+                        fontFamily = Montserrat, fontWeight = FontWeight.Black,
+                        fontSize = 52.sp, lineHeight = 56.sp, letterSpacing = (-1.5).sp, color = TagColors.Black
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.CenterEnd
                 )
-            )
-            Text(
-                "if you let me",
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.End,
-                style = TextStyle(
-                    fontFamily = Montserrat, fontWeight = FontWeight.Light,
-                    fontSize = 34.sp, letterSpacing = (-0.5).sp, color = TagColors.Black
+                FitText(
+                    text = AnnotatedString("if you let me"),
+                    style = TextStyle(
+                        fontFamily = Montserrat, fontWeight = FontWeight.Light,
+                        fontSize = 34.sp, lineHeight = 38.sp, letterSpacing = (-0.5).sp, color = TagColors.Black
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.CenterEnd
                 )
-            )
-            Spacer(Modifier.height(36.dp))
+                Spacer(Modifier.height(36.dp))
 
             TagGrid(gap = 8.dp) {
                 PermissionPill(
@@ -202,6 +229,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                 )
             }
         }
+        }
     }
 }
 
@@ -232,7 +260,7 @@ private fun PermissionPill(
             .background(if (granted) TagColors.Black else TagColors.Lime)
             .border(2.dp, TagColors.Black, shape)
             .clickable(enabled = !granted) { view.tick(Tick.Press); onClick() }
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = 20.dp),
         contentAlignment = if (align == TextAlign.End) Alignment.CenterEnd else Alignment.CenterStart
     ) {
         TagLabel(
