@@ -30,8 +30,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -54,10 +52,40 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Our own bottom sheet. The stock ModalBottomSheet lifts off the bottom edge when its list is
+ * scrolled, which lets the dashboard show through under it. This one is bolted to the bottom,
+ * its black runs under the gesture bar, and only the handle drags it away.
+ */
 @Composable
 private fun TagSheet(
     title: String,
@@ -65,30 +93,91 @@ private fun TagSheet(
     onDismiss: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = TagColors.Black,
-        contentColor = TagColors.White,
-        shape = RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp),
-        dragHandle = {
-            Box(
-                Modifier
-                    .padding(top = 12.dp, bottom = 8.dp)
-                    .size(width = 44.dp, height = 5.dp)
-                    .clip(CircleShape)
-                    .background(TagColors.Outline)
-            )
-        }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var shown by remember { mutableStateOf(false) }
+    val drag = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { shown = true }
+
+    fun close() {
+        if (!shown) return
+        shown = false
+        scope.launch { delay(230); onDismiss() }
+    }
+
+    Dialog(
+        onDismissRequest = ::close,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
     ) {
-        Column(
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            window?.setDimAmount(0f)
+            window?.isNavigationBarContrastEnforced = false
+        }
+        val scrim by animateFloatAsState(if (shown) 0.6f else 0f, tween(220), label = "scrim")
+        val noRipple = remember { MutableInteractionSource() }
+        val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.88f
+        val threshold = with(density) { 110.dp.toPx() }
+        val topShape = RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp)
+
+        Box(
             Modifier
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 16.dp)
-                .navigationBarsPadding()
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = scrim))
+                .clickable(interactionSource = noRipple, indication = null) { close() }
         ) {
-            TagLabel(title, subtitle, TagColors.White, size = 26.sp)
-            Spacer(Modifier.height(18.dp))
-            content()
+            AnimatedVisibility(
+                visible = shown,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)) { it },
+                exit = slideOutVertically(tween(220)) { it }
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = maxHeight)
+                        .offset { IntOffset(0, drag.value.roundToInt()) }
+                        .clip(topShape)
+                        .background(TagColors.Black)
+                        .border(2.dp, TagColors.Outline, topShape)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { }
+                ) {
+                    // Handle: the only draggable part, so the list below scrolls freely.
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(34.dp)
+                            .draggable(
+                                orientation = Orientation.Vertical,
+                                state = rememberDraggableState { d ->
+                                    scope.launch { drag.snapTo((drag.value + d).coerceAtLeast(0f)) }
+                                },
+                                onDragStopped = { velocity ->
+                                    if (drag.value > threshold || velocity > 1800f) close()
+                                    else scope.launch { drag.animateTo(0f, spring(dampingRatio = 0.7f)) }
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            Modifier
+                                .size(width = 44.dp, height = 5.dp)
+                                .clip(CircleShape)
+                                .background(TagColors.Outline)
+                        )
+                    }
+                    Column(
+                        Modifier
+                            .padding(horizontal = 24.dp)
+                            .navigationBarsPadding()
+                            .padding(bottom = 16.dp)
+                    ) {
+                        TagLabel(title, subtitle, TagColors.White, size = 26.sp)
+                        Spacer(Modifier.height(18.dp))
+                        content()
+                    }
+                }
+            }
         }
     }
 }
